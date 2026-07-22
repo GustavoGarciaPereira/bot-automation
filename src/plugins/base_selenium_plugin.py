@@ -63,6 +63,10 @@ def _build_chrome_options(headless: bool) -> ChromeOptions:
 
     # Common flags
     opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_argument("--disable-infobars")
+    opts.add_argument("--disable-extensions")
+    opts.add_argument("--no-first-run")
+    opts.add_argument("--no-default-browser-check")
     opts.add_argument("--window-size=1366,768")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)
@@ -104,6 +108,19 @@ async def selenium_driver(
         logger.info("Local ChromeDriver started (headless=%s)", headless)
 
     driver.implicitly_wait(2)
+
+    # Anti-detection: override navigator.webdriver et al
+    try:
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": """
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                window.navigator.chrome = {runtime: {}};
+                Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR','pt','en']});
+            """
+        })
+    except Exception:
+        pass
 
     try:
         yield driver

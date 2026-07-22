@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -32,7 +33,7 @@ _DEFAULT_CONFIG = {
     "plugin_name": "mercado_livre",
     "base_url": "https://lista.mercadolivre.com.br",
     "headless": True,
-    "timeout_seconds": 15,
+    "timeout_seconds": 30,
     "random_delay_min": 2,
     "random_delay_max": 4,
     "max_results_default": 10,
@@ -66,16 +67,105 @@ def _clear_config_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Multiple CSS selectors for ML result containers (tried in order)
+# ---------------------------------------------------------------------------
+
+_RESULT_CONTAINER_SELECTORS = [
+    "ol.ui-search-layout",
+    "section.ui-search-results",
+    "div.ui-search-result__wrapper",
+    "li.ui-search-layout__item",
+    "div.poly-card",
+    "ol.poly-card-list",
+    "div.ui-search-result",
+    "div[class*='poly-card']",
+]
+
+_ITEM_SELECTORS = [
+    "li.ui-search-layout__item",
+    "div.poly-card",
+    "div.ui-search-result__wrapper",
+    "li[class*='poly-card']",
+    "div.ui-search-result",
+    "div.ui-search-item",
+]
+
+_TITLE_SELECTORS = [
+    "a.poly-component__title",
+    "h2.poly-box__title",
+    "h2[class*='poly']",
+    "a[class*='poly-component__title']",
+    "h2 a",
+    "a.ui-search-item__group__title",
+    "a.ui-search-link",
+]
+
+_PRICE_FRACTION_SELECTORS = [
+    "span.andes-money-amount__fraction",
+    "span[class*='andes-money-amount__fraction']",
+    "span.poly-price__current span.andes-money-amount__fraction",
+    "span.price-tag-fraction",
+]
+
+_PRICE_CENTS_SELECTORS = [
+    "span.andes-money-amount__cents",
+    "span[class*='andes-money-amount__cents']",
+    "span.price-tag-cents",
+]
+
+_ORIGINAL_PRICE_SELECTORS = [
+    "span.poly-price__previous span.andes-money-amount__fraction",
+    "s.andes-money-amount span.andes-money-amount__fraction",
+    "span.poly-price__previous [class*='andes-money-amount__fraction']",
+]
+
+_URL_SELECTORS = [
+    "a.poly-component__title",
+    "a.ui-search-link",
+    "a[class*='poly-component__title']",
+    "a",
+]
+
+_IMAGE_SELECTORS = [
+    ("img.poly-component__picture", "src"),
+    ("img[class*='poly-component__picture']", "src"),
+    ("img", "data-src"),
+    ("img", "src"),
+]
+
+_FREE_SHIPPING_SELECTORS = [
+    "span.poly-component__shipping",
+    "div.poly-component__shipping",
+    "p.poly-component__shipping",
+    "[class*='shipping']",
+]
+
+_RATING_SELECTORS = [
+    "span.poly-reviews__rating",
+    "[class*='reviews__rating']",
+    "span.reviews-rating",
+]
+
+_REVIEWS_COUNT_SELECTORS = [
+    "span.poly-reviews__total",
+    "[class*='reviews__total']",
+    "span.reviews-count",
+]
+
+_CONDITION_SELECTORS = [
+    "span.poly-component__condition",
+    "[class*='condition']",
+    "span.ui-search-item__group__element",
+]
+
+
+# ---------------------------------------------------------------------------
 # Scraper
 # ---------------------------------------------------------------------------
 
 
 class MercadoLivreScraper(BaseScraper):
-    """Scraper for Mercado Livre product search using Selenium.
-
-    Navigates to ``lista.mercadolivre.com.br/{query}`` and parses the
-    HTML result list.
-    """
+    """Scraper for Mercado Livre product search using Selenium."""
 
     def __init__(
         self,
@@ -83,7 +173,8 @@ class MercadoLivreScraper(BaseScraper):
         remote_url: str | None = None,
     ) -> None:
         self._cfg = _load_config()
-        self._headless = headless if headless else self._cfg.get("headless", True)
+        # Respect passed headless; fall back to config.json default
+        self._headless = headless
         self._remote_url = remote_url
 
     # ------------------------------------------------------------------
@@ -108,31 +199,20 @@ class MercadoLivreScraper(BaseScraper):
             ) as driver:
                 driver.get(search_url)
 
-                # Wait for the result container
-                wait = WebDriverWait(driver, self._cfg["timeout_seconds"])
-                wait.until(
-                    EC.presence_of_element_located(
-                        (By.CSS_SELECTOR, "ol.ui-search-layout")
-                    )
-                )
+                # ---- Wait for any known result container ----
+                timeout = self._cfg.get("timeout_seconds", 30)
+                if not self._wait_for_container(driver, timeout):
+                    self._save_debug_artifacts(driver, query)
+                    return []
 
-                # Random human-like delay
+                # ---- Scroll to trigger lazy loading ----
+                self._scroll_page(driver)
+
+                # ---- Random human-like delay ----
                 self._random_delay()
 
-                # Extract items
-                items = driver.find_elements(
-                    By.CSS_SELECTOR, "li.ui-search-layout__item"
-                )
-
-                if not items:
-                    logger.warning(
-                        "No items found with primary selector — trying fallback"
-                    )
-                    items = driver.find_elements(
-                        By.CSS_SELECTOR,
-                        "div.ui-search-result, div.ui-search-item",
-                    )
-
+                # ---- Extract items ----
+                items = self._find_items(driver)
                 logger.info("ML scraping: found %d raw items", len(items))
 
                 products: list[Product] = []
@@ -155,17 +235,7 @@ class MercadoLivreScraper(BaseScraper):
 
         except Exception as exc:
             logger.error("ML scraping failed for query=%r: %s", query, exc)
-            if driver:
-                try:
-                    screenshot_path = (
-                        Path("data/logs")
-                        / f"ml_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                    )
-                    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-                    driver.save_screenshot(str(screenshot_path))
-                    logger.info("Screenshot saved to %s", screenshot_path)
-                except Exception:
-                    pass
+            self._save_debug_artifacts(driver, query) if driver else None
             return []
 
     async def extract(self, url: str, **kwargs: Any) -> dict[str, Any]:
@@ -181,20 +251,12 @@ class MercadoLivreScraper(BaseScraper):
                 driver.get(url)
                 self._random_delay()
 
-                # Title
-                title = self._safe_text(
-                    driver, "h1.ui-pdp-title"
-                ) or self._safe_text(driver, "h1")
-
-                # Price
-                price = self._safe_price_element(driver)
-
-                # Condition
-                condition = self._safe_text(
-                    driver, "span.ui-pdp-subtitle"
+                title = (
+                    self._safe_text(driver, "h1.ui-pdp-title")
+                    or self._safe_text(driver, "h1")
                 )
-
-                # Seller
+                price = self._safe_price_element(driver)
+                condition = self._safe_text(driver, "span.ui-pdp-subtitle")
                 seller = self._safe_text(
                     driver,
                     "a.ui-pdp-seller__link span, "
@@ -202,29 +264,84 @@ class MercadoLivreScraper(BaseScraper):
                     "a.andes-dropdown__trigger",
                 )
 
-                result = Product(
+                return Product(
                     title=title,
                     price=price,
                     condition=condition or None,
                     seller=seller or None,
                     url=url,
-                )
-
-                return result.model_dump()
+                ).model_dump()
 
         except Exception as exc:
             logger.error("ML extraction failed for %s: %s", url, exc)
             if driver:
-                try:
-                    screenshot_path = (
-                        Path("data/logs")
-                        / f"ml_extract_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                    )
-                    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-                    driver.save_screenshot(str(screenshot_path))
-                except Exception:
-                    pass
+                self._save_debug_artifacts(driver, url)
             return {}
+
+    # ------------------------------------------------------------------
+    # Internal — container wait
+    # ------------------------------------------------------------------
+
+    def _wait_for_container(self, driver: Any, timeout: int) -> bool:
+        """Try multiple selectors for the result container.
+
+        Returns True if any selector matched within *timeout* seconds.
+        """
+        for selector in _RESULT_CONTAINER_SELECTORS:
+            try:
+                WebDriverWait(driver, timeout).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                logger.debug("ML container found with: %s", selector)
+                return True
+            except TimeoutException:
+                continue
+        return False
+
+    def _find_items(self, driver: Any) -> list[Any]:
+        """Try multiple selectors to locate result items."""
+        for selector in _ITEM_SELECTORS:
+            items = driver.find_elements(By.CSS_SELECTOR, selector)
+            if items:
+                logger.debug("ML items found with selector: %s (%d)", selector, len(items))
+                return items
+        return []
+
+    def _scroll_page(self, driver: Any) -> None:
+        """Scroll down to trigger lazy-loaded content."""
+        try:
+            driver.execute_script(
+                "window.scrollTo(0, document.body.scrollHeight / 2);"
+            )
+            time.sleep(2)
+            driver.execute_script(
+                "window.scrollTo(0, document.body.scrollHeight);"
+            )
+            time.sleep(2)
+        except Exception as exc:
+            logger.debug("Scroll failed: %s", exc)
+
+    def _save_debug_artifacts(self, driver: Any, label: str) -> None:
+        """Save screenshot + page HTML for debugging."""
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_dir = Path("data/logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        # Screenshot
+        try:
+            shot = log_dir / f"ml_debug_{ts}.png"
+            driver.save_screenshot(str(shot))
+            logger.info("Debug screenshot saved → %s", shot)
+        except Exception as exc:
+            logger.warning("Debug screenshot failed: %s", exc)
+
+        # HTML source
+        try:
+            html_path = log_dir / f"ml_debug_{ts}.html"
+            html_path.write_text(driver.page_source, encoding="utf-8")
+            logger.info("Debug HTML saved → %s", html_path)
+        except Exception as exc:
+            logger.warning("Debug HTML save failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Internal — item parsing
@@ -232,58 +349,26 @@ class MercadoLivreScraper(BaseScraper):
 
     def _parse_item(self, item: Any) -> Product | None:
         """Parse a single search-result HTML element into a Product."""
-        # Title
-        title = (
-            self._safe_text(item, "a.poly-component__title")
-            or self._safe_text(item, "h2.poly-box__title")
-            or self._safe_text(item, "h2 a")
-            or self._safe_text(item, "a.ui-search-item__group__title")
-        )
+        title = self._first_text(item, _TITLE_SELECTORS)
         if not title:
             return None
 
-        # Price
         price = self._price_from_item(item)
-
-        # Original price
-        original_price_str = self._safe_text(
-            item,
-            "span.poly-price__previous span.andes-money-amount__fraction, "
-            "s.andes-money-amount span.andes-money-amount__fraction",
-        )
+        original_price_str = self._first_text(item, _ORIGINAL_PRICE_SELECTORS)
         original_price = self._parse_price_str(original_price_str) if original_price_str else None
 
-        # URL
-        url = (
-            self._safe_attr(item, "a.poly-component__title", "href")
-            or self._safe_attr(item, "a.ui-search-link", "href")
-            or self._safe_attr(item, "a", "href")
-        )
+        url = self._first_attr(item, _URL_SELECTORS, "href")
+        image_url = self._first_attr_from_pairs(item, _IMAGE_SELECTORS)
 
-        # Image
-        image_url = (
-            self._safe_attr(item, "img.poly-component__picture", "src")
-            or self._safe_attr(item, "img", "data-src")
-            or self._safe_attr(item, "img", "src")
-        )
+        free_shipping = bool(self._first_text(item, _FREE_SHIPPING_SELECTORS))
 
-        # Free shipping
-        free_shipping = bool(
-            self._safe_text(item, "span.poly-component__shipping, div.poly-component__shipping")
-        ) or bool(
-            self._safe_text(item, "p.poly-component__shipping")
-        )
-
-        # Rating
-        rating_str = self._safe_text(item, "span.poly-reviews__rating")
+        rating_str = self._first_text(item, _RATING_SELECTORS)
         rating = self._parse_float(rating_str)
 
-        # Reviews count
-        reviews_str = self._safe_text(item, "span.poly-reviews__total")
+        reviews_str = self._first_text(item, _REVIEWS_COUNT_SELECTORS)
         reviews_count = self._parse_int(reviews_str)
 
-        # Condition
-        condition = self._safe_text(item, "span.poly-component__condition")
+        condition = self._first_text(item, _CONDITION_SELECTORS)
 
         return Product(
             title=title,
@@ -299,53 +384,64 @@ class MercadoLivreScraper(BaseScraper):
 
     def _price_from_item(self, item: Any) -> float:
         """Extract price from a search result item."""
-        fraction = self._safe_text(
-            item,
-            "span.andes-money-amount__fraction, "
-            "span.price-tag-fraction",
-        )
-        cents = self._safe_text(
-            item,
-            "span.andes-money-amount__cents, "
-            "span.price-tag-cents",
-        )
+        fraction = self._first_text(item, _PRICE_FRACTION_SELECTORS)
+        cents = self._first_text(item, _PRICE_CENTS_SELECTORS)
         return self._build_price(fraction, cents)
 
     # ------------------------------------------------------------------
-    # Internal — helpers
+    # Internal — helpers with multiple selector fallback
     # ------------------------------------------------------------------
 
-    def _safe_text(self, element: Any, selector: str) -> str:
-        """Try to extract text from *element* using *selector*.
+    def _first_text(self, element: Any, selectors: list[str]) -> str:
+        """Try each selector until one returns non-empty text."""
+        for sel in selectors:
+            try:
+                found = element.find_element(By.CSS_SELECTOR, sel)
+                text = found.text.strip()
+                if text:
+                    return text
+            except Exception:
+                continue
+        return ""
 
-        Returns empty string on failure.
-        """
+    def _first_attr(self, element: Any, selectors: list[str], attr: str) -> str:
+        """Try each selector until one returns a non-empty attribute."""
+        for sel in selectors:
+            try:
+                found = element.find_element(By.CSS_SELECTOR, sel)
+                val = found.get_attribute(attr)
+                if val:
+                    return val
+            except Exception:
+                continue
+        return ""
+
+    def _first_attr_from_pairs(
+        self, element: Any, pairs: list[tuple[str, str]]
+    ) -> str:
+        """Try each (selector, attr) pair until one returns a value."""
+        for sel, attr in pairs:
+            try:
+                found = element.find_element(By.CSS_SELECTOR, sel)
+                val = found.get_attribute(attr)
+                if val:
+                    return val
+            except Exception:
+                continue
+        return ""
+
+    def _safe_text(self, element: Any, selector: str) -> str:
+        """Single-selector text extraction with error handling."""
         try:
             found = element.find_element(By.CSS_SELECTOR, selector)
             return found.text.strip()
         except Exception:
             return ""
 
-    def _safe_attr(self, element: Any, selector: str, attr: str) -> str:
-        """Try to extract an attribute from *element* using *selector*."""
-        try:
-            found = element.find_element(By.CSS_SELECTOR, selector)
-            return found.get_attribute(attr) or ""
-        except Exception:
-            return ""
-
     def _safe_price_element(self, driver: Any) -> float:
         """Extract price from a product detail page."""
-        fraction = self._safe_text(
-            driver,
-            "span.andes-money-amount__fraction, "
-            "span.price-tag-fraction",
-        )
-        cents = self._safe_text(
-            driver,
-            "span.andes-money-amount__cents, "
-            "span.price-tag-cents",
-        )
+        fraction = self._first_text(driver, _PRICE_FRACTION_SELECTORS)
+        cents = self._first_text(driver, _PRICE_CENTS_SELECTORS)
         return self._build_price(fraction, cents)
 
     def _build_price(self, fraction: str, cents: str) -> float:
@@ -369,6 +465,8 @@ class MercadoLivreScraper(BaseScraper):
 
     def _parse_float(self, raw: str) -> float | None:
         """Parse a string like '4.5' into float, or return None."""
+        if not raw:
+            return None
         cleaned = raw.strip().replace(",", ".")
         try:
             return float(cleaned)
@@ -377,6 +475,8 @@ class MercadoLivreScraper(BaseScraper):
 
     def _parse_int(self, raw: str) -> int | None:
         """Parse a string like '(25)' or '25' into int, or return None."""
+        if not raw:
+            return None
         cleaned = raw.strip().strip("()").replace(".", "")
         try:
             return int(cleaned)
