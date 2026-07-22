@@ -1,8 +1,8 @@
-"""Load and cache client configuration from JSON files under ``src/configs/``.
+"""Load and cache client configuration from JSON files under ``clients/``.
 
 Typical usage::
 
-    config = ConfigManager.get_client_config("escritorio_alpha")
+    config = ConfigManager.get_client_config("demo_mercado_livre")
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ class ConfigManager:
 
     @classmethod
     def get_client_config(
-        cls, client_id: str, configs_dir: str = "src/configs"
+        cls, client_id: str, configs_dir: str = "clients"
     ) -> ClienteConfig:
         """Load (with caching) a client's configuration.
 
@@ -37,8 +37,7 @@ class ConfigManager:
         if not path.exists():
             raise FileNotFoundError(
                 f"Client config not found: {path}\n"
-                f"Create a JSON file at src/configs/{client_id}.json "
-                f"(see cliente_exemplo.json for the template)."
+                f"Create a JSON file at clients/{client_id}.json"
             )
 
         cfg = ClienteConfig.load(client_id, configs_dir=configs_dir)
@@ -51,7 +50,7 @@ class ConfigManager:
         cls._cache.clear()
 
     @classmethod
-    def list_clients(cls, configs_dir: str = "src/configs") -> list[str]:
+    def list_clients(cls, configs_dir: str = "clients") -> list[str]:
         """Return available client IDs by scanning the configs directory."""
         cfg_dir = Path(configs_dir)
         if not cfg_dir.exists():

@@ -1,13 +1,13 @@
 # =============================================================================
-# RPA Core — Docker Compose (Selenium Grid + App)
+# Autobot RPA — Docker Compose (Selenium Grid + App)
 # =============================================================================
 #
 # Usage:
 #   docker compose up -d selenium-hub chrome-node    # start grid
-#   docker compose run --rm rpa --client-id escritorio_alpha
+#   docker compose run --rm rpa --client-id demo_mercado_livre
 #
 # Or run everything together:
-#   CLIENT_ID=escritorio_alpha docker compose up
+#   CLIENT_ID=demo_mercado_livre docker compose up
 
 version: "3.9"
 
@@ -60,23 +60,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: rpa-core
+    container_name: autobot-rpa
     depends_on:
       selenium-hub:
         condition: service_healthy
     environment:
-      - CLIENT_ID=${CLIENT_ID:-escritorio_alpha}
+      - CLIENT_ID=${CLIENT_ID:-demo_mercado_livre}
       - SELENIUM_REMOTE_URL=http://selenium-hub:4444
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - EMAIL_APP_PASSWORD=${EMAIL_APP_PASSWORD:-}
-      # Vault fallbacks (only used when keyring is unavailable inside container)
-      - SENHA_PORTAL_A=${SENHA_PORTAL_A:-}
-      - CERT_PASSWORD_MARIA=${CERT_PASSWORD_MARIA:-}
-      - SMTP_APP_PASSWORD=${SMTP_APP_PASSWORD:-}
     volumes:
-      - ./src/configs:/app/src/configs:ro
+      - ./clients:/app/clients:ro
       - ./data/output:/app/data/output
       - ./data/logs:/app/data/logs
-      - ./certs:/app/certs:ro          # mount certs directory if using .pfx
       - ./.env:/app/.env:ro
-    command: ["python", "-m", "src.main", "--client-id", "${CLIENT_ID:-escritorio_alpha}"]
+    command: ["python", "-m", "src.main", "--client-id", "${CLIENT_ID:-demo_mercado_livre}"]

@@ -1,6 +1,6 @@
-"""Abstract contract that every justice-portal plugin must fulfil.
+"""Abstract contract that every platform plugin must fulfil.
 
-New portals are added by subclassing `PortalPlugin` and registering the
+New platforms are added by subclassing `PortalPlugin` and registering the
 class in `PLUGIN_REGISTRY` (see `orchestrator.py`).
 """
 
@@ -14,9 +14,9 @@ if TYPE_CHECKING:
 
 
 class PortalPlugin(ABC):
-    """Each concrete plugin handles one specific justice portal (PJE, Tucujuris,
-    E-SAJ, DJE PDF, etc.).  The orchestrator calls the methods in the order
-    defined below.
+    """Each concrete plugin handles one specific web platform (Mercado Livre,
+    Google Maps, Reclame Aqui, etc.).  The orchestrator calls the methods in
+    the order defined below.
     """
 
     # -- Identity -----------------------------------------------------------
@@ -30,17 +30,17 @@ class PortalPlugin(ABC):
     @property
     @abstractmethod
     def portal_name(self) -> str:
-        """Human-readable portal name (used in logs and Excel output)."""
+        """Human-readable platform name (used in logs and Excel output)."""
         ...
 
     # -- Lifecycle -----------------------------------------------------------
 
     @abstractmethod
     async def authenticate(self, advogado: Advogado, config: dict[str, Any]) -> bool:
-        """Perform login, 2FA, and certificate installation.
+        """Perform login / authentication.
 
         Returns `True` on success.  MUST raise a descriptive exception on
-        failure so the orchestrator can log and skip to the next portal.
+        failure so the orchestrator can log and skip to the next platform.
         """
         ...
 
@@ -48,8 +48,8 @@ class PortalPlugin(ABC):
     async def fetch_intimations(
         self, advogado: Advogado, data_referencia: str
     ) -> list[dict[str, Any]]:
-        """Navigate the portal and return a list of raw dicts — one per
-        intimation found for the given lawyer / reference date.
+        """Navigate the platform and return a list of raw dicts — one per
+        record found for the given user / reference date.
         """
         ...
 
@@ -64,9 +64,7 @@ class PortalPlugin(ABC):
     async def take_action(
         self, record: IntimacaoRecord, advogado: Advogado
     ) -> None:
-        """Execute a portal-specific action — e.g. click 'Tomar Ciência',
-        'Ignorar', download a PDF, etc.
-        """
+        """Execute a platform-specific action — download, acknowledge, etc."""
         ...
 
     @abstractmethod

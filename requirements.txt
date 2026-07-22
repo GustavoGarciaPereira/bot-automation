@@ -1,5 +1,5 @@
 # =============================================================================
-# RPA Core — Python Dependencies
+# Autobot RPA — Python Dependencies
 # =============================================================================
 # Install:  pip install -r requirements.txt
 # Minimum Python: 3.10
@@ -12,6 +12,7 @@ tenacity>=8.2,<9
 # --- Web Scraping ------------------------------------------------------------
 selenium>=4.15,<5
 webdriver-manager>=4.0,<5       # auto-download chromedriver
+requests>=2.31,<3               # HTTP client for API-based platforms
 
 # --- AI / LLM (optional — remove if not using AI classification) -------------
 langchain>=0.1,<1
@@ -23,16 +24,11 @@ openai>=1.0,<2
 pandas>=2.1,<3
 openpyxl>=3.1,<4
 
-# --- PDF Parsing -------------------------------------------------------------
-pdfplumber>=0.10,<1
-PyPDF2>=3.0,<4
-cryptography>=41,<44            # for .pfx certificate extraction
-
 # --- Credential Vault --------------------------------------------------------
 keyring>=24,<26                 # Windows Credential Manager / macOS Keychain
 
-# --- Email (2FA + SMTP) ------------------------------------------------------
-# imaplib & smtplib are stdlib — no extra deps needed
+# --- Email (SMTP) ------------------------------------------------------------
+# smtplib is stdlib — no extra deps needed
 
 # --- Testing -----------------------------------------------------------------
 pytest>=8.0,<9

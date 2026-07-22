@@ -1,0 +1,23 @@
+{
+  "client_id": "demo_reclame_aqui",
+  "nome_escritorio": "Demo - Reclame Aqui",
+  "use_ai_classifier": true,
+  "advogados": [
+    {
+      "nome": "Bot RA",
+      "usuario": null,
+      "senha_ref": "VAULT:DEMO",
+      "certificado_path": null,
+      "email_2fa": null
+    }
+  ],
+  "portais_ativos": ["reclame_aqui"],
+  "emails_destino": ["demo@example.com"],
+  "classification_rules": {
+    "entrega": "Logística",
+    "reembolso": "Financeiro",
+    "atendimento": "Atendimento",
+    "produto": "Qualidade",
+    "cancelamento": "Cancelamento"
+  }
+}

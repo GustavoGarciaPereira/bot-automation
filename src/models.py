@@ -1,4 +1,4 @@
-"""Pydantic v2 data models for the RPA Core system.
+"""Pydantic v2 data models for the Autobot RPA system.
 
 All domain entities are defined here with full validation.
 No client-specific values are hardcoded — everything is driven by
@@ -20,16 +20,11 @@ from pydantic import BaseModel, Field, field_validator
 # ---------------------------------------------------------------------------
 
 class PortalType(str, Enum):
-    """Supported portal identifiers — extend as new plugins are added."""
+    """Supported platform identifiers — extend as new plugins are added."""
 
-    PORTAL_A = "portal_a"
-    PORTAL_B = "portal_b"
-    PORTAL_C = "portal_c"
-    CNJ_ESTADUAL = "cnj_estadual"
-    CNJ_FEDERAL = "cnj_federal"
-    DJE_ESTADUAL = "dje_estadual"
-    PORTAL_EXTRA = "portal_extra"
-    PORTAL_D = "portal_d"
+    MERCADO_LIVRE = "mercado_livre"
+    GOOGLE_MAPS = "google_maps"
+    RECLAME_AQUI = "reclame_aqui"
 
 
 class RecordStatus(str, Enum):
@@ -84,7 +79,7 @@ class EmailConfig(BaseModel):
 
 
 class ClienteConfig(BaseModel):
-    """Top-level configuration loaded from configs/<client_id>.json."""
+    """Top-level configuration loaded from clients/<client_id>.json."""
 
     client_id: str = Field(..., min_length=2, pattern=r"^[a-z0-9_]+$")
     nome_escritorio: str = Field(..., min_length=2)
@@ -109,7 +104,7 @@ class ClienteConfig(BaseModel):
     _registry: ClassVar[dict[str, ClienteConfig]] = {}
 
     @classmethod
-    def load(cls, client_id: str, configs_dir: str = "src/configs") -> ClienteConfig:
+    def load(cls, client_id: str, configs_dir: str = "clients") -> ClienteConfig:
         """Load, validate, cache, and return a client configuration from JSON."""
         import json
 

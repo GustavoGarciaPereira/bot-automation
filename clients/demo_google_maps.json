@@ -1,0 +1,23 @@
+{
+  "client_id": "demo_google_maps",
+  "nome_escritorio": "Demo - Google Maps",
+  "use_ai_classifier": true,
+  "advogados": [
+    {
+      "nome": "Bot Maps",
+      "usuario": null,
+      "senha_ref": "VAULT:DEMO",
+      "certificado_path": null,
+      "email_2fa": null
+    }
+  ],
+  "portais_ativos": ["google_maps"],
+  "emails_destino": ["demo@example.com"],
+  "classification_rules": {
+    "dentista": "Odontologia",
+    "clinico": "Clínica Geral",
+    "pediatra": "Pediatria",
+    "ortopedista": "Ortopedia",
+    "dermatologista": "Dermatologia"
+  }
+}

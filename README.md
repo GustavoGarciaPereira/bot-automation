@@ -1,6 +1,6 @@
-# ⚖️ RPA Core — Captura Genérica de Intimações Judiciais
+# 🤖 Autobot RPA — Extração Genérica de Dados Multi-Plataforma
 
-**Sistema RPA multi-tenant, 100% configurável, para captura e classificação de intimações em portais da justiça.**
+**Sistema RPA multi-tenant, 100% configurável, para extração de dados em múltiplas plataformas web.**
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Pydantic](https://img.shields.io/badge/pydantic-v2-ff69b4)](https://docs.pydantic.dev/latest/)
@@ -26,28 +26,35 @@
 - [Docker](#-docker)
 - [Testes](#-testes)
 - [Logs & Debug](#-logs--debug)
-- [Roadmap](#-roadmap)
 
 ---
 
 ## 🎯 Visão Geral
 
-O **RPA Core** automatiza o processo de consulta de intimações judiciais em múltiplos portais (PJE, E-SAJ, Tucujuris, Diários Oficiais, etc.), para múltiplos escritórios de advocacia simultaneamente, com **zero código específico por cliente**.
+O **Autobot RPA** automatiza a extração de dados de múltiplas plataformas web (Mercado Livre, Google Maps, Reclame Aqui, etc.), para múltiplos clientes simultaneamente, com **zero código específico por cliente**.
+
+### Plataformas suportadas
+
+| Plataforma | Tipo | Plugin |
+|---|---|---|
+| **Mercado Livre** | E-commerce | `mercado_livre` |
+| **Google Maps** | Geografia/Locais | `google_maps` |
+| **Reclame Aqui** | Reclamações | `reclame_aqui` |
 
 ### Princípios Fundamentais
 
 | Princípio | Descrição |
 |---|---|
-| **100% Genérico** | Nenhum nome de cliente, escritório ou portal está hardcoded |
+| **100% Genérico** | Nenhum nome de cliente ou plataforma está hardcoded |
 | **Multi-Tenant** | Um único código-base atende N clientes (`--client-id`) |
 | **Config-Driven** | Comportamento definido em JSON externo |
 | **Headless** | Roda em terminal/serviço, sem interface gráfica |
 | **IA como Aprimoramento** | LLM é opcional — se falhar, fallback para classificação manual |
-| **Resiliente** | Erro em um portal não derruba a execução inteira |
+| **Resiliente** | Erro em uma plataforma não derruba a execução inteira |
 
 ### Saída
 
-Uma **planilha Excel unificada** (`data/output/<client_id>/intimacoes_YYYY-MM-DD.xlsx`) com 19 colunas padronizadas, enviada por e-mail ao final da execução.
+Uma **planilha Excel unificada** (`data/output/<client_id>/records_YYYY-MM-DD.xlsx`) com colunas padronizadas, opcionalmente enviada por e-mail ao final da execução.
 
 ---
 
@@ -76,8 +83,8 @@ Uma **planilha Excel unificada** (`data/output/<client_id>/intimacoes_YYYY-MM-DD
 ```
 ┌──────────────────────────────────────┐
 │           DOMAIN (models.py)         │
-│  Advogado, ClienteConfig,            │
-│  IntimacaoRecord, PortalType         │
+│  ClienteConfig, IntimacaoRecord,     │
+│  PortalType, Advogado                │
 └────────────────┬─────────────────────┘
                  │
     ┌────────────┼────────────┐
@@ -91,10 +98,11 @@ Uma **planilha Excel unificada** (`data/output/<client_id>/intimacoes_YYYY-MM-DD
     │            │            │
 ┌───▼────────┐ ┌─▼──────────┐ ┌▼──────────┐
 │ ADAPTERS   │ │ ADAPTERS   │ │ ADAPTERS  │
-│ Portal A   │ │ Hybrid     │ │ Excel     │
-│ Portal B   │ │ Classifier │ │ Writer    │
-│ Portal C   │ │ (Regex+LLM)│ │ (Pandas)  │
-│ (Selenium) │ │            │ │           │
+│ Mercado    │ │ Hybrid     │ │ Excel     │
+│ Livre      │ │ Classifier │ │ Writer    │
+│ Google Maps│ │ (Regex+LLM)│ │ (Pandas)  │
+│ Reclame    │ │            │ │           │
+│ Aqui       │ │            │ │           │
 └────────────┘ └────────────┘ └───────────┘
 ```
 
@@ -109,17 +117,17 @@ Cada execução do RPA segue esta pipeline:
        │
 2. CONFIG      ClienteConfig.load() → cache em memória
        │
-3. ORCHESTRATE Para cada Advogado × Portal ativo:
+3. ORCHESTRATE Para cada Advogado × Plataforma ativa:
        │
-       ├─ 3a. AUTH       authenticate() → login, 2FA, certificado
+       ├─ 3a. AUTH       authenticate() → login (se necessário)
        ├─ 3b. FETCH      fetch_intimations() → lista de dicts brutos
        ├─ 3c. PROCESS    process_intimation() → IntimacaoRecord
-       └─ 3d. ACTION     take_action() → Tomar Ciência / Ignorar
+       └─ 3d. ACTION     take_action() → ação específica da plataforma
        │
 4. CLASSIFY    HybridClassifier em todos os registros (concorrente)
        │         Regex (keyword match) → LLM (DeepSeek/GPT) → MANUAL
        │
-5. WRITE       ExcelWriter → data/output/<client_id>/intimacoes_<data>.xlsx
+5. WRITE       ExcelWriter → data/output/<client_id>/records_<data>.xlsx
        │
 6. NOTIFY      SMTP → anexa planilha e envia para emails_destino
 ```
@@ -129,7 +137,7 @@ Cada execução do RPA segue esta pipeline:
 ## 📁 Estrutura de Pastas
 
 ```
-rpa_core/
+autobot-rpa/
 ├── src/
 │   ├── main.py                      # Entrypoint CLI
 │   ├── orchestrator.py              # Pipeline principal
@@ -137,15 +145,19 @@ rpa_core/
 │   ├── models.py                    # Pydantic v2: todos os modelos
 │   │
 │   ├── interfaces/                  # 🔌 Ports (contratos abstratos)
-│   │   ├── portal_plugin.py         #   ABC para plugins de portal
+│   │   ├── portal_plugin.py         #   ABC para plugins de plataforma
+│   │   ├── scraper.py              #   ABC para scrapers (search/extract)
 │   │   ├── classifier.py            #   ABC para classificadores
 │   │   └── output_writer.py         #   ABC para persistência
 │   │
 │   ├── plugins/                     # 🔧 Adapters (implementações)
 │   │   ├── base_selenium_plugin.py  #   Helpers: waits, retry, screenshots
-│   │   ├── portal_a_plugin.py       #   Demo: Books to Scrape
-│   │   ├── portal_b_plugin.py       #   Template: PJE/CNJ (certificado)
-│   │   └── portal_c_pdf_plugin.py   #   Template: DJE (PDF)
+│   │   ├── mercado_livre/           #   Plugin Mercado Livre
+│   │   │   └── plugin.py
+│   │   ├── google_maps/             #   Plugin Google Maps
+│   │   │   └── plugin.py
+│   │   └── reclame_aqui/            #   Plugin Reclame Aqui
+│   │       └── plugin.py
 │   │
 │   ├── services/                    # 🧠 Lógica de negócio
 │   │   ├── classifier_service.py    #   Hybrid: Regex → LLM → Manual
@@ -156,23 +168,23 @@ rpa_core/
 │   │   ├── credential_vault.py      #   Keyring → .env fallback
 │   │   └── certificate_handler.py   #   Certificados .pfx/A3
 │   │
-│   ├── utils/                       # 🛠️ Utilitários
-│   │   ├── logger.py                #   JSON lines + rotação diária
-│   │   ├── pdf_parser.py            #   pdfplumber + PyPDF2
-│   │   └── email_2fa_handler.py     #   IMAP polling para 2FA
-│   │
-│   └── configs/                     # ⚙️ Configs dos clientes
-│       └── cliente_exemplo.json     #   Template 100% genérico
+│   └── utils/                       # 🛠️ Utilitários
+│       ├── logger.py                #   JSON lines + rotação diária
+│       └── email_2fa_handler.py     #   IMAP polling para 2FA
+│
+├── clients/                         # ⚙️ Configs dos clientes
+│   ├── demo_mercado_livre.json      #   Config Mercado Livre
+│   ├── demo_google_maps.json        #   Config Google Maps
+│   └── demo_reclame_aqui.json       #   Config Reclame Aqui
 │
 ├── tests/
-│   ├── test_models.py               # 14 testes de validação Pydantic
-│   └── test_classifier.py           # 11 testes do classificador híbrido
+│   ├── test_models.py               # Testes de validação Pydantic
+│   └── test_classifier.py           # Testes do classificador híbrido
 │
 ├── data/
 │   ├── output/                      # Planilhas geradas
 │   └── logs/                        # Logs JSON + screenshots de erro
 │
-├── certs/                           # Certificados digitais (.pfx)
 ├── requirements.txt                 # Dependências com versões fixas
 ├── docker-compose.yml               # Selenium Grid 4 + App
 ├── Dockerfile                       # Python 3.12-slim
@@ -189,10 +201,9 @@ rpa_core/
 |---|---|---|
 | **Linguagem** | Python | 3.10+ |
 | **Modelos** | Pydantic | 2.5+ |
-| **Web Scraping** | Selenium + WebDriverWait | 4.15+ |
+| **Web Scraping** | Selenium + WebDriverWait / Requests | 4.15+ / 2.31+ |
 | **IA / LLM** | LangChain + ChatOpenAI | 0.1+ |
 | **Excel** | Pandas + OpenPyXL | 2.1+ / 3.1+ |
-| **PDF** | pdfplumber → PyPDF2 fallback | 0.10+ / 3.0+ |
 | **Credenciais** | keyring → python-dotenv | 24+ / 1.0+ |
 | **Resiliência** | tenacity (exponential backoff) | 8.2+ |
 | **Testes** | pytest + pytest-asyncio | 8.0+ |
@@ -205,7 +216,7 @@ rpa_core/
 ```bash
 # 1. Clone o repositório
 git clone <repo-url>
-cd bot-advocacia
+cd autobot-rpa
 
 # 2. Crie o ambiente virtual
 python3 -m venv venv
@@ -233,45 +244,37 @@ LLM_BASE_URL=https://api.deepseek.com/v1
 LLM_MODEL=deepseek-chat
 LLM_TEMPERATURE=0.0
 
-# Email — senha de app para IMAP (captura 2FA) e SMTP (envio de relatórios)
+# Email — senha de app para SMTP (envio de relatórios)
 EMAIL_APP_PASSWORD=your-app-password
-
-# Vault fallback — senhas quando keyring não está disponível
-SENHA_PORTAL_A=sua-senha
-CERT_PASSWORD_MARIA=sua-senha-certificado
-SMTP_APP_PASSWORD=sua-senha-smtp
 ```
 
-### 2. Configuração do Cliente (`src/configs/cliente_exemplo.json`)
+### 2. Configuração do Cliente (`clients/demo_mercado_livre.json`)
 
 ```jsonc
 {
-  "client_id": "meu_escritorio",        // identificador único
-  "nome_escritorio": "Meu Escritório",
-  "use_ai_classifier": true,             // habilitar IA para classificação
+  "client_id": "demo_mercado_livre",        // identificador único
+  "nome_escritorio": "Demo - Mercado Livre",
+  "use_ai_classifier": true,                 // habilitar IA para classificação
 
   "advogados": [
     {
-      "nome": "Dr. Silva",
-      "usuario": "dr.silva",             // null se usa certificado
-      "senha_ref": "VAULT:SENHA_PORTAL", // referência para o CredentialVault
-      "certificado_path": null,          // ou "certs/dr-silva.pfx"
-      "email_2fa": "dr.silva@email.com"  // null se portal não pede 2FA
+      "nome": "Bot ML",
+      "usuario": null,
+      "senha_ref": "VAULT:DEMO",
+      "certificado_path": null,
+      "email_2fa": null
     }
   ],
 
-  "portais_ativos": ["portal_a", "portal_b"],
+  "portais_ativos": ["mercado_livre"],
 
-  "emails_destino": ["relatorios@escritorio.com"],
+  "emails_destino": ["demo@example.com"],
 
   // Regras de classificação: palavra-chave → categoria
   "classification_rules": {
-    "execução": "Execução",
-    "tutela": "Tutela Antecipada",
-    "recurso": "Recurso",
-    "embargos": "Embargos",
-    "sentença": "Sentença"
-    // ... adicione quantas quiser
+    "notebook": "Informática",
+    "iphone": "Celulares",
+    "tv": "Eletrônicos"
   }
 }
 ```
@@ -292,81 +295,86 @@ SMTP_APP_PASSWORD=sua-senha-smtp
 # Ativar ambiente virtual
 source venv/bin/activate
 
+# Dry-run (validar configuração sem executar)
+python -m src.main --client-id demo_mercado_livre --dry-run
+
 # Execução headless (padrão)
-python -m src.main --client-id cliente_exemplo
+python -m src.main --client-id demo_mercado_livre
 
 # Com navegador visível (debug)
-python -m src.main --client-id cliente_exemplo --no-headless
+python -m src.main --client-id demo_mercado_livre --no-headless
 
 # Usando Selenium Grid remoto
-python -m src.main --client-id cliente_exemplo --remote-selenium http://localhost:4444
+python -m src.main --client-id demo_mercado_livre --remote-selenium http://localhost:4444
 
 # Listar clientes disponíveis
 python -m src.main --list-clients
 
 # Via variável de ambiente
-CLIENT_ID=cliente_exemplo python -m src.main
+CLIENT_ID=demo_mercado_livre python -m src.main
 ```
 
-### Saída esperada
+### Dry-run
+
+O modo `--dry-run` valida a configuração e o carregamento dos plugins sem executar scraping:
+
+```bash
+python -m src.main --client-id demo_mercado_livre --dry-run
+# ✓ DRY RUN — demo_mercado_livre: configuration OK
+```
+
+### Saída esperada (execução completa)
 
 ```
-20:06:19 | INFO | main | RPA Core starting — client=cliente_exemplo
-20:06:20 | INFO | orchestrator | Pipeline started | lawyers=1 | portals=1
-20:06:21 | INFO | orchestrator | → João Silva | portal_a | authenticating …
-20:06:22 | INFO | portal_a | ✅ Books to Scrape carregado com sucesso.
-20:06:22 | INFO | portal_a | 📚 Extraídos 20 livros da página.
-20:06:22 | INFO | orchestrator | → João Silva | portal_a | fetched 20 raw records
-20:06:23 | INFO | orchestrator | Pipeline finished | records=20 | elapsed=2.1s
-20:06:23 | INFO | main | ✓ Done — data/output/cliente_exemplo/intimacoes_2026-07-06.xlsx
+17:06:19 | INFO | main | Autobot RPA starting — client=demo_mercado_livre
+17:06:20 | INFO | orchestrator | Pipeline started | lawyers=1 | platforms=1
+17:06:21 | INFO | orchestrator | → Bot ML | mercado_livre | authenticating …
+17:06:22 | INFO | mercado_livre | ✅ Autenticado com sucesso.
+17:06:23 | INFO | orchestrator | → Bot ML | mercado_livre | fetched 10 raw records
+17:06:24 | INFO | orchestrator | Pipeline finished | records=10 | elapsed=2.1s
+17:06:24 | INFO | main | ✓ Done — data/output/demo_mercado_livre/records_2026-07-06.xlsx
 ```
 
 ---
 
 ## 🔌 Criando um Novo Plugin
 
-Para adicionar um novo portal (ex: E-SAJ, Projudi, etc.):
+Para adicionar uma nova plataforma (ex: Amazon, Buscapé, etc.):
 
 ### Passo 1 — Criar a classe
 
 ```python
-# src/plugins/portal_esaj_plugin.py
+# src/plugins/minha_plataforma/plugin.py
 from src.interfaces.portal_plugin import PortalPlugin
 from src.models import Advogado, IntimacaoRecord, PortalType
 
-class ESAJPlugin(PortalPlugin):
+class MinhaPlataformaPlugin(PortalPlugin):
 
     @property
     def portal_type(self) -> PortalType:
-        return PortalType.PORTAL_EXTRA   # ou adicione um novo no enum
+        return PortalType.MERCADO_LIVRE  # ou adicione um novo no enum
 
     @property
     def portal_name(self) -> str:
-        return "E-SAJ"
+        return "Minha Plataforma"
 
     def __init__(self, headless: bool = True, remote_url: str | None = None):
         self.headless = headless
         self.remote_url = remote_url
-        # ...
 
     async def authenticate(self, advogado, config) -> bool:
-        # Login no E-SAJ
         ...
 
     async def fetch_intimations(self, advogado, data_ref) -> list[dict]:
-        # Extrair intimações
         ...
 
     async def process_intimation(self, raw, advogado) -> IntimacaoRecord:
-        # Mapear para o modelo canônico
         ...
 
     async def take_action(self, record, advogado) -> None:
-        # Clicar em "Tomar Ciência"
         ...
 
     async def cleanup(self) -> None:
-        # Fechar driver
         ...
 ```
 
@@ -374,14 +382,25 @@ class ESAJPlugin(PortalPlugin):
 
 ```python
 # src/orchestrator.py — adicione ao PLUGIN_REGISTRY
-PLUGIN_REGISTRY[PortalType.PORTAL_EXTRA] = "src.plugins.portal_esaj_plugin.ESAJPlugin"
+PLUGIN_REGISTRY[PortalType.MINHA_PLATAFORMA] = "src.plugins.minha_plataforma.plugin.MinhaPlataformaPlugin"
 ```
 
-### Passo 3 — Ativar na config do cliente
+### Passo 3 — Adicionar ao enum
+
+```python
+# src/models.py
+class PortalType(str, Enum):
+    MERCADO_LIVRE = "mercado_livre"
+    GOOGLE_MAPS = "google_maps"
+    RECLAME_AQUI = "reclame_aqui"
+    MINHA_PLATAFORMA = "minha_plataforma"  # novo
+```
+
+### Passo 4 — Ativar na config do cliente
 
 ```json
 {
-  "portais_ativos": ["portal_a", "portal_b", "portal_extra"]
+  "portais_ativos": ["mercado_livre", "minha_plataforma"]
 }
 ```
 
@@ -456,10 +475,6 @@ cert = CertificateHandler.load(
     "certs/advogado.pfx",
     password_ref="VAULT:CERT_PASSWORD"
 )
-
-# Para Selenium: configure o perfil Chrome com o certificado
-# Para requests: cert.create_ssl_context()
-# Para extrair PEM: cert.extract_to_pem()
 ```
 
 ---
@@ -473,10 +488,10 @@ cert = CertificateHandler.load(
 docker compose up -d selenium-hub chrome-node
 
 # 2. Rodar o RPA (one-shot)
-docker compose run --rm rpa --client-id cliente_exemplo
+docker compose run --rm rpa --client-id demo_mercado_livre
 
 # 3. Ou tudo junto
-CLIENT_ID=cliente_exemplo docker compose up
+CLIENT_ID=demo_mercado_livre docker compose up
 
 # 4. Parar tudo
 docker compose down
@@ -508,20 +523,6 @@ pytest tests/test_classifier.py -v
 pytest --cov=src --cov-report=term-missing
 ```
 
-### Cobertura atual
-
-| Arquivo | Testes |
-|---|---|
-| `test_models.py` | 14 testes — validação Pydantic, bounds, load/cache, enums |
-| `test_classifier.py` | 11 testes — regex, LLM fallback, AI disabled, mock |
-
-### Teste rápido de conectividade LLM
-
-```bash
-python test_deepseek.py
-# ✅ Conexão bem-sucedida! Resposta: OK
-```
-
 ---
 
 ## 📊 Logs & Debug
@@ -532,7 +533,7 @@ Logs usam **JSON lines** para ingestão em ELK / Splunk / Datadog:
 
 ```json
 {"ts": "2026-07-06T20:06:19.123Z", "level": "INFO", "logger": "orchestrator",
- "msg": "Pipeline finished | records=20 | elapsed=2.1s | output=data/output/..."}
+ "msg": "Pipeline finished | records=10 | elapsed=2.1s | output=data/output/..."}
 ```
 
 ### Localização
@@ -541,7 +542,7 @@ Logs usam **JSON lines** para ingestão em ELK / Splunk / Datadog:
 |---|---|
 | Logs diários | `data/logs/execution_YYYY-MM-DD.log` |
 | Screenshots de erro | `data/logs/screenshot_error_YYYYMMDD_HHMMSS.png` |
-| Planilhas | `data/output/<client_id>/intimacoes_YYYY-MM-DD.xlsx` |
+| Planilhas | `data/output/<client_id>/records_YYYY-MM-DD.xlsx` |
 
 ### Rotação
 
@@ -549,21 +550,6 @@ Logs usam **JSON lines** para ingestão em ELK / Splunk / Datadog:
 - **Backups:** 30 arquivos mantidos
 - **Console:** nível INFO (stderr, formato legível)
 - **Arquivo:** nível DEBUG (JSON)
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Plugin E-SAJ (São Paulo)
-- [ ] Plugin Projudi (Paraná)
-- [ ] Plugin Tucujuris (Amapá)
-- [ ] Plugin DJE Nacional (CNJ)
-- [ ] Suporte a captcha via 2Captcha/AntiCaptcha
-- [ ] Agendamento via Cron / APScheduler
-- [ ] Dashboard web para revisão de classificações manuais
-- [ ] Integração com Slack/Teams para notificações
-- [ ] Export CSV e PDF além do Excel
-- [ ] Modo replay (reprocessar screenshots/logs offline)
 
 ---
 

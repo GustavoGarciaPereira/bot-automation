@@ -1,8 +1,8 @@
-"""Hybrid intimation classifier — regex first (free), LLM second (paid).
+"""Hybrid classifier — regex first (free), LLM second (paid).
 
 The classification pipeline:
 1. **Keyword match** — iterate the client's ``classification_rules`` dict.
-   If the ``objeto_comunicacao`` contains a keyword → category + confidence 1.0.
+   If the record text contains a keyword → category + confidence 1.0.
 2. **LLM** (optional, gated by config) — ask the model.  Only the exact
    category set is accepted; any other response is discarded.
 3. **Fallback** — return ``"CLASSIFICACAO_MANUAL"`` / 0.0 so the analyst
@@ -139,10 +139,10 @@ class HybridClassifier(Classifier):
 def _build_llm_prompt(texto: str, categorias: list[str]) -> str:
     cats = "\n".join(f"- {c}" for c in categorias)
     return (
-        "Você é um classificador jurídico. Classifique a intimação abaixo "
-        "em EXATAMENTE UMA das seguintes categorias:\n\n"
+        "Classifique o texto abaixo em EXATAMENTE UMA das seguintes "
+        "categorias:\n\n"
         f"{cats}\n\n"
         "Responda APENAS com o nome da categoria, sem explicações, "
         "numeração ou pontuação adicional.\n\n"
-        f'Texto da intimação: """{texto}"""'
+        f'Texto: """{texto}"""'
     )

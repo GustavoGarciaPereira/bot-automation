@@ -64,6 +64,10 @@ data/logs/*
 # Screenshots salvos em erro (vão para data/logs/ mas garantia extra)
 *.screenshot.png
 
+# Output spreadsheets
+*.xlsx
+*.csv
+
 # ---------------------------------------------------------------------------
 # Certificates & secrets (nunca commitar)
 # ---------------------------------------------------------------------------

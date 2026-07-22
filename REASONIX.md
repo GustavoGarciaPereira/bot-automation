@@ -1,38 +1,40 @@
 # REASONIX.md - Contexto e Regras de Engenharia
 
 ## 1. VISÃO GERAL DO PROJETO
-Este é um **RPA (Robotic Process Automation) Genérico e Multi-Tenant** para captura de intimações judiciais em portais da justiça.
+Este é um **RPA (Robotic Process Automation) Genérico e Multi-Tenant** para extração de dados em múltiplas plataformas web (Mercado Livre, Google Maps, Reclame Aqui, etc.).
 - **Linguagem:** Python 3.10+
 - **Paradigma:** Programação Orientada a Objetos (POO) + Programação Assíncrona (asyncio)
-- **Arquitetura:** Hexagonal (Ports & Adapters) para permitir plugabilidade de novos portais sem alterar o core.
+- **Arquitetura:** Hexagonal (Ports & Adapters) para permitir plugabilidade de novas plataformas sem alterar o core.
 - **Saída:** Planilha Excel unificada enviada por e-mail.
-- **Público-alvo:** Escritórios de advocacia (múltiplos clientes).
+- **Público-alvo:** Múltiplos clientes (multi-tenant).
 
 ## 2. PRINCÍPIOS FUNDAMENTAIS (NÃO NEGOCIÁVEIS)
-1. **100% Genérico:** Nenhum nome de cliente, escritório ou portal específico deve estar hardcoded no código fonte. Tudo vem de configuração (JSON/Env).
+1. **100% Genérico:** Nenhum nome de cliente, escritório ou plataforma específica deve estar hardcoded no código fonte. Tudo vem de configuração (JSON/Env).
 2. **Multi-Tenant:** Um único código base deve atender múltiplos clientes simultaneamente, diferenciados pelo `client_id`.
 3. **Sem GUI:** O sistema é headless (roda em terminal/serviço). Nenhuma interface gráfica (Tkinter, PyQt) é permitida.
-4. **Config-Driven:** Todo comportamento (portais ativos, advogados, regras de classificação, e-mails) deve ser definido em arquivos JSON externos.
+4. **Config-Driven:** Todo comportamento (plataformas ativas, usuários, regras de classificação, e-mails) deve ser definido em arquivos JSON externos.
 5. **IA como Aprimoramento, não como Dependência:** A IA (LLM) é usada APENAS para classificação de textos (De-para) quando o Regex falha. Se a API de IA falhar, o sistema deve fazer fallback para "CLASSIFICACAO_MANUAL" sem quebrar.
 
 ## 3. ARQUITETURA TÉCNICA (A ESTRUTURA QUE VOCÊ DEVE SEGUIR)
 
 ### 3.1. Estrutura de Pastas (Obrigatória)
 ```
-rpa_core/
+autobot-rpa/
 ├── src/
-│   ├── main.py                  # Entrypoint: parse de argumentos (--client-id, --headless)
+│   ├── main.py                  # Entrypoint: parse de argumentos (--client-id, --headless, --dry-run)
 │   ├── orchestrator.py          # Orquestrador principal (dispara a pipeline)
-│   ├── config_manager.py        # Carrega JSONs da pasta configs/
+│   ├── config_manager.py        # Carrega JSONs da pasta clients/
 │   ├── models.py                # Pydantic models (IntimacaoRecord, ClienteConfig, etc.)
 │   ├── interfaces/              # ABCs (contratos)
-│   │   ├── portal_plugin.py     # Classe abstrata para portais
+│   │   ├── portal_plugin.py     # Classe abstrata para plugins de plataforma
+│   │   ├── scraper.py           # Classe abstrata para scrapers (search/extract)
 │   │   ├── classifier.py        # Classe abstrata para classificadores
 │   │   └── output_writer.py     # Classe abstrata para escrita
-│   ├── plugins/                 # Implementações concretas de portais
+│   ├── plugins/                 # Implementações concretas de plataformas
 │   │   ├── base_selenium_plugin.py  # Helper com waits e setup do driver
-│   │   ├── portal_a_plugin.py
-│   │   └── portal_b_plugin.py
+│   │   ├── mercado_livre/           # Plugin Mercado Livre
+│   │   ├── google_maps/             # Plugin Google Maps
+│   │   └── reclame_aqui/            # Plugin Reclame Aqui
 │   ├── services/                # Lógica de negócio
 │   │   ├── classifier_service.py    # Híbrido (Regex + IA)
 │   │   ├── llm_client.py            # LangChain + OpenAI/Azure
@@ -40,13 +42,13 @@ rpa_core/
 │   ├── security/                # Segurança e credenciais
 │   │   ├── credential_vault.py  # Leitura de secrets (Windows CredMan / .env)
 │   │   └── certificate_handler.py # Carregamento de certificados .pfx
-│   ├── utils/                   # Utilitários transversais
-│   │   ├── logger.py            # Logging estruturado (JSON lines)
-│   │   ├── pdf_parser.py        # PyPDF2/PDFPlumber para Diários Oficiais
-│   │   └── email_2fa_handler.py # IMAP para capturar códigos de verificação
-│   └── configs/                 # Configurações dos clientes (JSON)
-│       ├── cliente_exemplo.json
-│       └── .gitkeep
+│   └── utils/                   # Utilitários transversais
+│       ├── logger.py            # Logging estruturado (JSON lines)
+│       └── email_2fa_handler.py # IMAP para capturar códigos de verificação
+├── clients/                     # Configurações dos clientes (JSON)
+│   ├── demo_mercado_livre.json
+│   ├── demo_google_maps.json
+│   └── demo_reclame_aqui.json
 ├── data/
 │   ├── output/                  # Planilhas geradas (organizadas por client_id/data)
 │   └── logs/                    # Logs de execução (execution_YYYY-MM-DD.log)

@@ -59,8 +59,8 @@ class TestAdvogado:
 
 class TestIntimacaoRecord:
     def test_defaults(self) -> None:
-        r = IntimacaoRecord(portal="portal_a", advogado="Dr. Silva")
-        assert r.portal == "portal_a"
+        r = IntimacaoRecord(portal="mercado_livre", advogado="Dr. Silva")
+        assert r.portal == "mercado_livre"
         assert r.advogado == "Dr. Silva"
         assert r.status_registro == "Pendente"
         assert r.data_consulta != ""
@@ -104,9 +104,9 @@ SAMPLE_CONFIG = {
         {"nome": "Dr. A", "senha_ref": "VAULT:A"},
         {"nome": "Dr. B", "senha_ref": "VAULT:B"},
     ],
-    "portais_ativos": ["portal_a", "portal_b"],
+    "portais_ativos": ["mercado_livre", "google_maps"],
     "emails_destino": ["to@example.com"],
-    "classification_rules": {"prazo": "Prazo", "recurso": "Recurso"},
+    "classification_rules": {"notebook": "Informática", "iphone": "Celulares"},
 }
 
 

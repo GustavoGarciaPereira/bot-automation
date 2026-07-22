@@ -1,0 +1,24 @@
+{
+  "client_id": "demo_mercado_livre",
+  "nome_escritorio": "Demo - Mercado Livre",
+  "use_ai_classifier": true,
+  "advogados": [
+    {
+      "nome": "Bot ML",
+      "usuario": null,
+      "senha_ref": "VAULT:DEMO",
+      "certificado_path": null,
+      "email_2fa": null
+    }
+  ],
+  "portais_ativos": ["mercado_livre"],
+  "emails_destino": ["demo@example.com"],
+  "classification_rules": {
+    "notebook": "Informática",
+    "dell": "Informática",
+    "iphone": "Celulares",
+    "smartphone": "Celulares",
+    "tv": "Eletrônicos",
+    "geladeira": "Eletrodomésticos"
+  }
+}

@@ -1,8 +1,8 @@
 # =============================================================================
-# RPA Core — Dockerfile
+# Autobot RPA — Dockerfile
 # =============================================================================
-# Build:  docker build -t rpa-core .
-# Run:    docker run --rm -e CLIENT_ID=escritorio_alpha rpa-core
+# Build:  docker build -t autobot-rpa .
+# Run:    docker run --rm -e CLIENT_ID=demo_mercado_livre autobot-rpa
 
 FROM python:3.12-slim
 
@@ -20,9 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # App code
 COPY src/ ./src/
+COPY clients/ ./clients/
 
 # Data dirs (mounted as volumes in production, but created for dev)
 RUN mkdir -p /app/data/output /app/data/logs
 
 ENTRYPOINT ["python", "-m", "src.main"]
-CMD ["--client-id", "escritorio_alpha"]
+CMD ["--client-id", "demo_mercado_livre"]

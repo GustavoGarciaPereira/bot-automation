@@ -2,10 +2,10 @@
 
 Pipeline:
 1. Load client config + classification rules.
-2. For each lawyer × portal pair, run the plugin.
-3. Classify every intimation.
+2. For each platform × user, run the plugin.
+3. Classify every record.
 4. Write unified Excel.
-5. Email the report.
+5. Email the report (if configured).
 """
 
 from __future__ import annotations
@@ -31,16 +31,13 @@ logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Plugin registry — map PortalType → "module.path:ClassName"
-# Extend this when adding new portals.
+# Extend this when adding new platforms.
 # ---------------------------------------------------------------------------
 
 PLUGIN_REGISTRY: dict[PortalType, str] = {
-    PortalType.PORTAL_A: "src.plugins.portal_a_plugin.PortalAPlugin",
-    PortalType.PORTAL_B: "src.plugins.portal_b_plugin.PortalBPlugin",
-    PortalType.PORTAL_C: "src.plugins.portal_c_pdf_plugin.PortalCPDFPlugin",
-    # Add more mappings here as new plugins are created:
-    # PortalType.CNJ_ESTADUAL: "src.plugins.cnj_estadual_plugin.CNJEstadualPlugin",
-    # PortalType.CNJ_FEDERAL: "src.plugins.cnj_federal_plugin.CNJFederalPlugin",
+    PortalType.MERCADO_LIVRE: "src.plugins.mercado_livre.plugin.MercadoLivrePlugin",
+    PortalType.GOOGLE_MAPS: "src.plugins.google_maps.plugin.GoogleMapsPlugin",
+    PortalType.RECLAME_AQUI: "src.plugins.reclame_aqui.plugin.ReclameAquiPlugin",
 }
 
 
@@ -53,10 +50,12 @@ class RPAOrchestrator:
         *,
         headless: bool = True,
         remote_selenium_url: str | None = None,
+        dry_run: bool = False,
     ) -> None:
         self.client_id = client_id
         self.headless = headless
         self.remote_selenium_url = remote_selenium_url
+        self.dry_run = dry_run
 
         # Load config
         self.config = ConfigManager.get_client_config(client_id)
@@ -74,8 +73,21 @@ class RPAOrchestrator:
     async def run(self) -> str:
         """Execute the full pipeline and return the output Excel path."""
         started = datetime.now()
+
+        if self.dry_run:
+            logger.info(
+                "DRY RUN — client=%s | platforms=%s",
+                self.client_id,
+                [p.value for p in self.config.portais_ativos],
+            )
+            print(
+                f"\n✓ DRY RUN — {self.client_id}: "
+                f"{len(self.config.portais_ativos)} platform(s) configured"
+            )
+            return ""
+
         logger.info(
-            "Pipeline started | client=%s | lawyers=%d | portals=%d",
+            "Pipeline started | client=%s | lawyers=%d | platforms=%d",
             self.client_id,
             len(self.config.advogados),
             len(self.config.portais_ativos),
@@ -84,7 +96,7 @@ class RPAOrchestrator:
         all_records: list[IntimacaoRecord] = []
         data_ref = datetime.now().strftime("%Y-%m-%d")
 
-        # ---- For each lawyer × portal --------------------------------
+        # ---- For each user × platform ----------------------------------
         for advogado in self.config.advogados:
             for portal_type in self.config.portais_ativos:
                 try:
@@ -92,13 +104,13 @@ class RPAOrchestrator:
                     all_records.extend(records)
                 except Exception as exc:
                     logger.error(
-                        "Portal %s failed for %s: %s",
+                        "Platform %s failed for %s: %s",
                         portal_type.value,
                         advogado.nome,
                         exc,
                         extra={"portal": portal_type.value, "advogado": advogado.nome},
                     )
-                    # Continue with next portal — never crash the whole pipeline
+                    # Continue with next platform — never crash the whole pipeline
 
         # ---- Classify ------------------------------------------------
         await self._classify_all(all_records)
@@ -123,7 +135,7 @@ class RPAOrchestrator:
         return output_path
 
     # ------------------------------------------------------------------
-    # Per-portal execution
+    # Per-platform execution
     # ------------------------------------------------------------------
 
     async def _run_portal(
@@ -168,8 +180,7 @@ class RPAOrchestrator:
                     await plugin.take_action(record, advogado)
                 except Exception as exc:
                     logger.warning(
-                        "Action failed for proc=%s: %s",
-                        record.numero_processo,
+                        "Action failed for record: %s",
                         exc,
                     )
                     record.status_registro = "Erro"
@@ -207,7 +218,7 @@ class RPAOrchestrator:
     # ------------------------------------------------------------------
 
     async def _send_email_report(self, attachment_path: str) -> None:
-        """Send the Excel report via SMTP."""
+        """Send the report via SMTP."""
         if not self.config.email_config:
             logger.info("No email_config — skipping email")
             return
@@ -223,16 +234,16 @@ class RPAOrchestrator:
         msg["From"] = cfg.sender_email
         msg["To"] = ", ".join(self.config.emails_destino)
         msg["Subject"] = (
-            f"[RPA] Intimações — {self.config.nome_escritorio} "
+            f"[RPA] Relatório — {self.config.nome_escritorio} "
             f"({datetime.now().strftime('%d/%m/%Y')})"
         )
 
         msg.attach(
             MIMEText(
-                f"Relatório de intimações para {self.config.nome_escritorio}.\n\n"
+                f"Relatório de dados extraídos para {self.config.nome_escritorio}.\n\n"
                 f"Cliente: {self.client_id}\n"
                 f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-                "Este e-mail foi gerado automaticamente pelo RPA Core.",
+                "Este e-mail foi gerado automaticamente pelo Autobot RPA.",
                 "plain",
             )
         )

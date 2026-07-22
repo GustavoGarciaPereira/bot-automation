@@ -1,1 +1,1 @@
-"""RPA Core — Generic Multi-Tenant Judicial Intimation Capture System."""
+"""Autobot RPA — Generic Multi-Platform Data Extraction."""

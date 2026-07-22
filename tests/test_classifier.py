@@ -26,7 +26,7 @@ def sample_config() -> ClienteConfig:
             "advogados": [
                 {"nome": "Dr. A", "senha_ref": "VAULT:A"},
             ],
-            "portais_ativos": ["portal_a"],
+            "portais_ativos": ["mercado_livre"],
             "emails_destino": ["to@example.com"],
             "use_ai_classifier": True,
             "classification_rules": {
@@ -59,7 +59,7 @@ def classifier_with_ai(mock_llm: AsyncMock, sample_config: ClienteConfig) -> Hyb
 
 def _record(texto: str) -> IntimacaoRecord:
     return IntimacaoRecord(
-        portal="portal_a",
+        portal="mercado_livre",
         advogado="Dr. A",
         objeto_comunicacao=texto,
     )
@@ -104,17 +104,19 @@ class TestRegexMatching:
 # ---------------------------------------------------------------------------
 
 class TestNoRegexMatch:
-    async def test_empty_text_falls_back(self, classifier_with_ai: HybridClassifier) -> None:
+    async def test_empty_text_triggers_llm(self, classifier_with_ai: HybridClassifier) -> None:
         cat, conf = await classifier_with_ai.classify(_record(""))
-        assert cat == FALLBACK_CATEGORY
-        assert conf == 0.0
+        # LLM (mocked) returns "Recurso" for empty/unknown text
+        assert cat == "Recurso"
+        assert conf == 0.8
 
-    async def test_no_keywords_falls_back(self, classifier_with_ai: HybridClassifier) -> None:
+    async def test_no_keywords_triggers_llm(self, classifier_with_ai: HybridClassifier) -> None:
         cat, conf = await classifier_with_ai.classify(
-            _record("Documento anexado aos autos")
+            _record("Texto sem nenhuma keyword conhecida")
         )
-        assert cat == FALLBACK_CATEGORY
-        assert conf == 0.0
+        # LLM (mocked) returns "Recurso" when regex does not match
+        assert cat == "Recurso"
+        assert conf == 0.8
 
 
 # ---------------------------------------------------------------------------
