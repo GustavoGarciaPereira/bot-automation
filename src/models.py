@@ -98,6 +98,11 @@ class ClienteConfig(BaseModel):
         description="Keyword → category mapping for regex-first classification",
     )
 
+    settings: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Platform-specific settings (search_terms, max_results, etc.)",
+    )
+
     # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------

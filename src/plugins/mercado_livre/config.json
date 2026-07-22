@@ -1,0 +1,10 @@
+{
+    "plugin_name": "mercado_livre",
+    "base_url": "https://api.mercadolibre.com",
+    "site_id": "MLB",
+    "rate_limit_seconds": 1.0,
+    "max_retries": 3,
+    "timeout_seconds": 15,
+    "user_agent": "Mozilla/5.0 (compatible; AutoBotRPA/1.0)",
+    "access_token": ""
+}

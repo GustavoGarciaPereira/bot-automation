@@ -20,5 +20,9 @@
     "smartphone": "Celulares",
     "tv": "Eletrônicos",
     "geladeira": "Eletrodomésticos"
+  },
+  "settings": {
+    "search_terms": ["notebook dell", "iphone 15"],
+    "max_results": 10
   }
 }
