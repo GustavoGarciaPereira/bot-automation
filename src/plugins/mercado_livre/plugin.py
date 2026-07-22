@@ -1,7 +1,8 @@
 """Mercado Livre platform plugin.
 
-Uses the public Mercado Livre REST API to search for products
-and extract product details.  No Selenium / browser required.
+Uses Selenium to scrape the public Mercado Livre search page
+(``lista.mercadolivre.com.br``), since the REST API now requires
+authentication.
 """
 
 from __future__ import annotations
@@ -37,9 +38,9 @@ class MercadoLivrePlugin(PortalPlugin):
     async def authenticate(
         self, advogado: Advogado, config: dict[str, Any]
     ) -> bool:
-        """No authentication required for public Mercado Livre API."""
+        """No authentication required — public HTML scraping."""
         self._settings = config.get("settings", {})
-        logger.info("Mercado Livre: no authentication required")
+        logger.info("Mercado Livre: no authentication required (HTML scraping)")
         return True
 
     async def fetch_intimations(
@@ -59,21 +60,20 @@ class MercadoLivrePlugin(PortalPlugin):
             return []
 
         self._scraper = MercadoLivreScraper(
-            access_token=self._settings.get("access_token")
+            headless=self.headless,
+            remote_url=self.remote_url,
         )
         all_results: list[dict[str, Any]] = []
 
         for term in search_terms:
             logger.info("Searching Mercado Livre for: %s", term)
             try:
-                results = self._scraper.search(term, max_results=max_results)
-                # Tag each result with the search term for traceability
+                results = await self._scraper.search(term, max_results=max_results)
                 for r in results:
                     r["_search_term"] = term
                 all_results.extend(results)
             except Exception as exc:
                 logger.error("Search failed for term %r: %s", term, exc)
-                # Continue with next term — never crash the pipeline
 
         logger.info(
             "Mercado Livre: fetched %d products across %d terms",
@@ -91,12 +91,12 @@ class MercadoLivrePlugin(PortalPlugin):
             portal=self.portal_name,
             advogado=advogado.nome,
             tipo_comunicacao="Produto",
-            numero_processo=raw_data.get("id", ""),
+            numero_processo=raw_data.get("url", ""),
             objeto_comunicacao=raw_data.get("title", ""),
             data_comunicacao=raw_data.get("collected_at", ""),
-            parte_1=raw_data.get("seller_name", ""),
+            parte_1=raw_data.get("seller", ""),
             instancia=raw_data.get("condition", ""),
-            comarca=raw_data.get("currency_id", ""),
+            comarca=raw_data.get("currency", ""),
             despacho=(
                 f"R$ {raw_data['price']:.2f}" if raw_data.get("price") else None
             ),
@@ -106,12 +106,10 @@ class MercadoLivrePlugin(PortalPlugin):
     async def take_action(
         self, record: IntimacaoRecord, advogado: Advogado
     ) -> None:
-        """No action needed for API-based product extraction."""
         logger.debug(
-            "Mercado Livre: recorded product %s", record.numero_processo
+            "Mercado Livre: recorded product %s", record.objeto_comunicacao
         )
 
     async def cleanup(self) -> None:
-        """Release scraper resources."""
         self._scraper = None
         logger.debug("Mercado Livre: cleanup done")

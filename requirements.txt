@@ -35,3 +35,4 @@ pytest>=8.0,<9
 pytest-asyncio>=0.23,<1
 pytest-mock>=3.12,<4
 responses>=0.25,<1              # HTTP mock for API-based tests
+beautifulsoup4>=4.12,<5        # HTML parsing in test mocks

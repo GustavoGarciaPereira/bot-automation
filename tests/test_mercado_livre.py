@@ -1,310 +1,368 @@
-"""Unit tests for the Mercado Livre plugin.
+"""Unit tests for the Mercado Livre HTML scraper.
 
-All HTTP calls are mocked — no real API requests are made.
+All Selenium calls are mocked — no real browser is launched.
 """
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-import responses
 
 from src.plugins.mercado_livre.models import Product, SearchResult
 from src.plugins.mercado_livre.scraper import MercadoLivreScraper, _clear_config_cache
 
 # ---------------------------------------------------------------------------
-# Sample API responses (realistic Mercado Livre JSON shapes)
+# Sample HTML snippets simulating Mercado Livre search result items
 # ---------------------------------------------------------------------------
 
-SAMPLE_SEARCH_RESPONSE = {
-    "site_id": "MLB",
-    "query": "notebook dell",
-    "paging": {"total": 2, "offset": 0, "limit": 10, "primary_results": 2},
-    "results": [
-        {
-            "id": "MLB1234567890",
-            "title": "Notebook Dell Inspiron 15 3000",
-            "price": 2999.0,
-            "currency_id": "BRL",
-            "available_quantity": 10,
-            "condition": "new",
-            "permalink": "https://produto.mercadolivre.com.br/MLB-1234567890",
-            "thumbnail": "http://http2.mlstatic.com/thumb.jpg",
-            "seller": {"id": 12345},
-            "shipping": {"free_shipping": True},
-            "reviews": {"total": 25, "average_rating": 4.5},
-        },
-        {
-            "id": "MLB9876543210",
-            "title": "Dell Notebook Vostro 14",
-            "price": 3500.0,
-            "original_price": 4200.0,
-            "currency_id": "BRL",
-            "available_quantity": 5,
-            "condition": "new",
-            "permalink": "https://produto.mercadolivre.com.br/MLB-9876543210",
-            "thumbnail": "http://http2.mlstatic.com/thumb2.jpg",
-            "seller": {"id": 67890},
-            "shipping": {"free_shipping": False},
-            "reviews": {"total": 10},
-        },
-    ],
-}
+SAMPLE_ITEM_1 = """
+<li class="ui-search-layout__item">
+  <a class="poly-component__title" href="https://produto.mercadolivre.com.br/MLB-1">
+    Notebook Dell Inspiron 15 3000
+  </a>
+  <span class="andes-money-amount__fraction">3.499</span>
+  <span class="andes-money-amount__cents">90</span>
+  <span class="poly-price__previous">
+    <span class="andes-money-amount__fraction">4.200</span>
+  </span>
+  <img class="poly-component__picture" src="http://mlstatic.com/img1.jpg" />
+  <span class="poly-component__shipping">Frete grátis</span>
+  <span class="poly-reviews__rating">4.5</span>
+  <span class="poly-reviews__total">(25)</span>
+  <span class="poly-component__condition">Novo</span>
+</li>
+"""
 
-SAMPLE_ITEM_RESPONSE = {
-    "id": "MLB1234567890",
-    "title": "Notebook Dell Inspiron 15 3000",
-    "price": 2999.0,
-    "currency_id": "BRL",
-    "available_quantity": 10,
-    "condition": "new",
-    "permalink": "https://produto.mercadolivre.com.br/MLB-1234567890",
-    "thumbnail": "http://http2.mlstatic.com/thumb.jpg",
-    "seller": {"id": 12345},
-    "shipping": {"free_shipping": True},
-    "reviews": {"total": 25, "average_rating": 4.5},
-}
+SAMPLE_ITEM_2 = """
+<li class="ui-search-layout__item">
+  <a class="poly-component__title" href="https://produto.mercadolivre.com.br/MLB-2">
+    iPhone 15 Pro Max 256GB
+  </a>
+  <span class="andes-money-amount__fraction">7.999</span>
+  <span class="andes-money-amount__cents">00</span>
+  <img class="poly-component__picture" src="http://mlstatic.com/img2.jpg" />
+  <span class="poly-reviews__rating">4.8</span>
+  <span class="poly-reviews__total">(152)</span>
+  <span class="poly-component__condition">Novo</span>
+</li>
+"""
 
-SAMPLE_SELLER_RESPONSE = {
-    "id": 12345,
-    "nickname": "VENDEDOR_ABC",
-}
+SAMPLE_ITEM_3 = """
+<li class="ui-search-layout__item">
+  <a class="poly-component__title" href="https://produto.mercadolivre.com.br/MLB-3">
+    Notebook usado em bom estado
+  </a>
+  <span class="andes-money-amount__fraction">1.200</span>
+  <img class="poly-component__picture" src="http://mlstatic.com/img3.jpg" />
+  <span class="poly-component__condition">Usado</span>
+</li>
+"""
 
-SAMPLE_EMPTY_SEARCH = {
-    "site_id": "MLB",
-    "query": "zzzzzzzzz",
-    "paging": {"total": 0, "offset": 0, "limit": 10, "primary_results": 0},
-    "results": [],
-}
+
+def _make_mock_item(html: str) -> MagicMock:
+    """Create a mock Selenium WebElement from an HTML string.
+
+    The mock supports ``find_element(By.CSS_SELECTOR, selector)`` and
+    returns a sub-element whose ``.text`` or ``.get_attribute()`` returns
+    the expected values.
+    """
+    from selenium.webdriver.common.by import By
+
+    def _fake_find_child(by: str, selector: str) -> MagicMock:
+        """Simulate find_element on an item — returns the matching field."""
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Try to find the element matching the selector
+        if "poly-component__title" in selector:
+            tag = soup.select_one("a.poly-component__title")
+            if tag:
+                m = MagicMock()
+                m.text = tag.text.strip()
+                m.get_attribute.return_value = tag.get("href", "")
+                return m
+
+        if "andes-money-amount__fraction" in selector:
+            tag = soup.select_one("span.andes-money-amount__fraction")
+            if tag:
+                m = MagicMock()
+                m.text = tag.text.strip()
+                return m
+
+        if "andes-money-amount__cents" in selector:
+            tag = soup.select_one("span.andes-money-amount__cents")
+            if tag:
+                m = MagicMock()
+                m.text = tag.text.strip()
+                return m
+
+        if "poly-price__previous" in selector:
+            tag = soup.select_one("span.poly-price__previous")
+            if tag:
+                m = MagicMock()
+                m.text = tag.text.strip()
+                m.find_element.return_value = _fake_find_child(
+                    by, "span.andes-money-amount__fraction"
+                )
+                return m
+
+        if "poly-component__picture" in selector and "src" in selector:
+            tag = soup.select_one("img.poly-component__picture")
+            if tag:
+                m = MagicMock()
+                m.get_attribute.return_value = tag.get("src", "")
+                return m
+        if "poly-component__picture" in selector:
+            tag = soup.select_one("img.poly-component__picture")
+            if tag:
+                m = MagicMock()
+                m.get_attribute.return_value = tag.get("src", "")
+                return m
+
+        if "poly-component__shipping" in selector:
+            tag = soup.select_one("span.poly-component__shipping")
+            if tag:
+                m = MagicMock()
+                m.text = tag.text.strip()
+                return m
+
+        if "poly-reviews__rating" in selector:
+            tag = soup.select_one("span.poly-reviews__rating")
+            if tag:
+                m = MagicMock()
+                m.text = tag.text.strip()
+                return m
+
+        if "poly-reviews__total" in selector:
+            tag = soup.select_one("span.poly-reviews__total")
+            if tag:
+                m = MagicMock()
+                m.text = tag.text.strip()
+                return m
+
+        if "poly-component__condition" in selector:
+            tag = soup.select_one("span.poly-component__condition")
+            if tag:
+                m = MagicMock()
+                m.text = tag.text.strip()
+                return m
+
+        if "ui-search-link" in selector:
+            tag = soup.select_one("a")
+            if tag and tag.get("href"):
+                m = MagicMock()
+                m.get_attribute.return_value = tag.get("href", "")
+                return m
+
+        # Fallback for any img (src or data-src)
+        if "img" in selector:
+            tag = soup.select_one("img")
+            if tag:
+                src = tag.get("data-src") or tag.get("src", "")
+                m = MagicMock()
+                m.get_attribute.return_value = src
+                return m
+
+        # Fallback for h2
+        if "h2" in selector:
+            tag = soup.select_one("h2")
+            if tag:
+                m = MagicMock()
+                m.text = tag.text.strip()
+                return m
+
+        raise Exception(f"Mock not found for selector: {selector}")
+
+    mock_item = MagicMock()
+    mock_item.find_element.side_effect = lambda by, sel: _fake_find_child(by, sel)
+    return mock_item
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    """Clear the config cache between tests so config.json is reloaded."""
     _clear_config_cache()
     yield
 
 
 @pytest.fixture
 def scraper() -> MercadoLivreScraper:
-    return MercadoLivreScraper()
+    return MercadoLivreScraper(headless=True)
 
 
 # ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------
 
+
 class TestSearch:
-    @responses.activate
-    def test_search_returns_products(self, scraper: MercadoLivreScraper) -> None:
-        """Mock a search response and verify products are parsed correctly."""
-        responses.get(
-            "https://api.mercadolibre.com/sites/MLB/search?q=notebook+dell&limit=10",
-            json=SAMPLE_SEARCH_RESPONSE,
-            status=200,
-        )
-        # Seller name lookup
-        responses.get(
-            "https://api.mercadolibre.com/users/12345",
-            json=SAMPLE_SELLER_RESPONSE,
-            status=200,
-        )
-        responses.get(
-            "https://api.mercadolibre.com/users/67890",
-            json={"id": 67890, "nickname": "VENDEDOR_XYZ"},
-            status=200,
-        )
+    @patch("src.plugins.mercado_livre.scraper.selenium_driver")
+    @patch("src.plugins.mercado_livre.scraper.WebDriverWait")
+    async def test_search_parses_html(
+        self, mock_wait: MagicMock, mock_selenium: MagicMock, scraper: MercadoLivreScraper
+    ) -> None:
+        """Mock Selenium with HTML containing 3 items and verify parsing."""
+        # Mock the driver returned by selenium_driver context manager
+        mock_driver = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__.return_value = mock_driver
+        mock_selenium.return_value = mock_cm
 
-        results = scraper.search("notebook dell", max_results=10)
+        # Mock wait.until to do nothing
+        mock_wait_instance = MagicMock()
+        mock_wait.return_value = mock_wait_instance
 
-        assert len(results) == 2
+        # Mock the list items
+        mock_items = [
+            _make_mock_item(SAMPLE_ITEM_1),
+            _make_mock_item(SAMPLE_ITEM_2),
+            _make_mock_item(SAMPLE_ITEM_3),
+        ]
+        mock_driver.find_elements.return_value = mock_items
+
+        results = await scraper.search("notebook dell", max_results=10)
+
+        assert len(results) == 3
         assert results[0]["title"] == "Notebook Dell Inspiron 15 3000"
-        assert results[0]["price"] == 2999.0
+        assert results[0]["price"] == 3499.90
         assert results[0]["free_shipping"] is True
-        assert results[0]["seller_name"] == "VENDEDOR_ABC"
-        assert results[0]["reviews_count"] == 25
         assert results[0]["rating"] == 4.5
-        assert results[1]["original_price"] == 4200.0
+        assert results[0]["reviews_count"] == 25
+        assert results[0]["condition"] == "Novo"
+
+        assert results[1]["title"] == "iPhone 15 Pro Max 256GB"
+        assert results[1]["price"] == 7999.00
         assert results[1]["free_shipping"] is False
 
-    @responses.activate
-    def test_search_empty_results(self, scraper: MercadoLivreScraper) -> None:
-        """Empty search results should return empty list."""
-        responses.get(
-            "https://api.mercadolibre.com/sites/MLB/search?q=zzzzzzzzz&limit=10",
-            json=SAMPLE_EMPTY_SEARCH,
-            status=200,
-        )
+        assert results[2]["title"] == "Notebook usado em bom estado"
+        assert results[2]["price"] == 1200.00
+        assert results[2]["condition"] == "Usado"
 
-        results = scraper.search("zzzzzzzzz", max_results=10)
-        assert results == []
-
-    @responses.activate
-    def test_search_api_error_returns_empty(self, scraper: MercadoLivreScraper) -> None:
-        """HTTP 500 should return empty list after retries."""
-        responses.get(
-            "https://api.mercadolibre.com/sites/MLB/search?q=error&limit=10",
-            status=500,
-        )
-        # tenacity will retry, but responses will return 500 each time
-        # The final fallback should be an empty list
-        results = scraper.search("error", max_results=10)
-        assert results == []
-
-    @responses.activate
-    def test_search_network_error_returns_empty(
-        self, scraper: MercadoLivreScraper
+    @patch("src.plugins.mercado_livre.scraper.selenium_driver")
+    @patch("src.plugins.mercado_livre.scraper.WebDriverWait")
+    async def test_max_results_limit(
+        self, mock_wait: MagicMock, mock_selenium: MagicMock, scraper: MercadoLivreScraper
     ) -> None:
-        """Connection error should return empty list after retries."""
-        responses.get(
-            "https://api.mercadolibre.com/sites/MLB/search?q=timeout&limit=10",
-            body=Exception("Connection refused"),
-        )
+        """20 items in HTML, max_results=5 → returns 5."""
+        mock_driver = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__.return_value = mock_driver
+        mock_selenium.return_value = mock_cm
 
-        results = scraper.search("timeout", max_results=10)
+        mock_wait_instance = MagicMock()
+        mock_wait.return_value = mock_wait_instance
+
+        # Create 20 item mocks
+        mock_items = [_make_mock_item(SAMPLE_ITEM_1) for _ in range(20)]
+        mock_driver.find_elements.return_value = mock_items
+
+        results = await scraper.search("notebook dell", max_results=5)
+
+        assert len(results) == 5
+
+    @patch("src.plugins.mercado_livre.scraper.selenium_driver")
+    @patch("src.plugins.mercado_livre.scraper.WebDriverWait")
+    async def test_empty_results(
+        self, mock_wait: MagicMock, mock_selenium: MagicMock, scraper: MercadoLivreScraper
+    ) -> None:
+        """No items in HTML → returns []."""
+        mock_driver = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__.return_value = mock_driver
+        mock_selenium.return_value = mock_cm
+
+        mock_wait_instance = MagicMock()
+        mock_wait.return_value = mock_wait_instance
+
+        mock_driver.find_elements.return_value = []
+
+        results = await scraper.search("zzzzzzzz", max_results=10)
+
         assert results == []
 
 
 # ---------------------------------------------------------------------------
-# Extract
+# Price parsing
 # ---------------------------------------------------------------------------
 
-class TestExtract:
-    @responses.activate
-    def test_extract_product(self, scraper: MercadoLivreScraper) -> None:
-        """Mock a single item lookup."""
-        responses.get(
-            "https://api.mercadolibre.com/items/MLB1234567890",
-            json=SAMPLE_ITEM_RESPONSE,
-            status=200,
-        )
-        responses.get(
-            "https://api.mercadolibre.com/users/12345",
-            json=SAMPLE_SELLER_RESPONSE,
-            status=200,
-        )
 
-        result = scraper.extract("MLB1234567890")
+class TestPriceParsing:
+    def test_price_3499_90(self, scraper: MercadoLivreScraper) -> None:
+        """3.499 + 90 → 3499.90"""
+        assert scraper._build_price("3.499", "90") == 3499.90
 
-        assert result["title"] == "Notebook Dell Inspiron 15 3000"
-        assert result["price"] == 2999.0
-        assert result["seller_name"] == "VENDEDOR_ABC"
-        assert result["free_shipping"] is True
+    def test_price_7999_00(self, scraper: MercadoLivreScraper) -> None:
+        """7.999 + 00 → 7999.00"""
+        assert scraper._build_price("7.999", "00") == 7999.00
 
-    @responses.activate
-    def test_extract_not_found(self, scraper: MercadoLivreScraper) -> None:
-        """Non-existent item returns empty dict."""
-        responses.get(
-            "https://api.mercadolibre.com/items/MLB999",
-            status=404,
-        )
+    def test_price_no_cents(self, scraper: MercadoLivreScraper) -> None:
+        """1.200 without cents → 1200.00"""
+        assert scraper._build_price("1.200", "") == 1200.00
 
-        result = scraper.extract("MLB999")
-        assert result == {}
+    def test_price_empty(self, scraper: MercadoLivreScraper) -> None:
+        """Empty strings → 0.0"""
+        assert scraper._build_price("", "") == 0.0
+
+    def test_price_invalid(self, scraper: MercadoLivreScraper) -> None:
+        """Invalid input → 0.0"""
+        assert scraper._build_price("abc", "def") == 0.0
 
 
 # ---------------------------------------------------------------------------
-# Parse product
+# Free shipping detection
 # ---------------------------------------------------------------------------
 
-class TestParseProduct:
-    def test_parse_product_full(self, scraper: MercadoLivreScraper) -> None:
-        """Parse a complete product dict from the API response."""
-        raw = SAMPLE_SEARCH_RESPONSE["results"][0]
-        product = scraper._parse_product(raw)
 
-        assert isinstance(product, Product)
-        assert product.id == "MLB1234567890"
-        assert product.title == "Notebook Dell Inspiron 15 3000"
-        assert product.price == 2999.0
-        assert product.original_price is None
+class TestFreeShipping:
+    def test_free_shipping_true(self, scraper: MercadoLivreScraper) -> None:
+        """Item with 'Frete grátis' text → free_shipping=True."""
+        mock_item = _make_mock_item(SAMPLE_ITEM_1)
+        product = scraper._parse_item(mock_item)
+        assert product is not None
         assert product.free_shipping is True
-        assert product.seller_id == 12345
-        assert product.reviews_count == 25
-        assert product.rating == 4.5
-        assert product.condition == "new"
 
-    def test_parse_product_minimal(self, scraper: MercadoLivreScraper) -> None:
-        """Parse a product with minimal fields (missing optional ones)."""
-        raw = {"id": "MLB1", "title": "Test", "price": 100.0}
-        product = scraper._parse_product(raw)
-
-        assert product.id == "MLB1"
-        assert product.title == "Test"
-        assert product.price == 100.0
-        assert product.original_price is None
-        assert product.seller_id is None
+    def test_free_shipping_false(self, scraper: MercadoLivreScraper) -> None:
+        """Item without shipping text → free_shipping=False."""
+        mock_item = _make_mock_item(SAMPLE_ITEM_2)
+        product = scraper._parse_item(mock_item)
+        assert product is not None
         assert product.free_shipping is False
-        assert product.reviews_count == 0
-        assert product.rating is None
-
-    def test_parse_product_zero_price(self, scraper: MercadoLivreScraper) -> None:
-        """Price 0 or None should be handled gracefully."""
-        raw = {"id": "MLB2", "title": "Free", "price": 0}
-        product = scraper._parse_product(raw)
-        assert product.price == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Rate limiting
-# ---------------------------------------------------------------------------
-
-class TestRateLimit:
-    @responses.activate
-    def test_rate_limit_enforced(self, scraper: MercadoLivreScraper) -> None:
-        """Verify that rate limiting causes sleep between requests."""
-        responses.get(
-            "https://api.mercadolibre.com/sites/MLB/search?q=a&limit=10",
-            json=SAMPLE_EMPTY_SEARCH,
-            status=200,
-        )
-        responses.get(
-            "https://api.mercadolibre.com/sites/MLB/search?q=b&limit=10",
-            json=SAMPLE_EMPTY_SEARCH,
-            status=200,
-        )
-
-        with patch("time.sleep") as mock_sleep:
-            scraper.search("a", max_results=10)
-            scraper.search("b", max_results=10)
-
-            # sleep should have been called at least once (rate limiting)
-            assert mock_sleep.call_count >= 1
 
 
 # ---------------------------------------------------------------------------
 # Product model
 # ---------------------------------------------------------------------------
 
+
 class TestProductModel:
     def test_product_defaults(self) -> None:
-        p = Product(id="MLB1", title="Test", price=10.0)
-        assert p.currency_id == "BRL"
+        p = Product(title="Test", price=10.0)
+        assert p.currency == "R$"
         assert p.original_price is None
         assert p.free_shipping is False
-        assert p.condition == "new"
-        assert p.available_quantity == 0
-        assert p.reviews_count == 0
+        assert p.condition is None
         assert p.rating is None
+        assert p.reviews_count is None
+        assert p.seller is None
 
     def test_search_result(self) -> None:
-        p = Product(id="MLB1", title="Test", price=10.0)
-        sr = SearchResult(query="test", total=1, products=[p])
+        p = Product(title="Test", price=10.0)
+        sr = SearchResult(query="test", products=[p])
         assert sr.query == "test"
-        assert sr.total == 1
+        assert sr.total_results is None
         assert len(sr.products) == 1
 
 
 # ---------------------------------------------------------------------------
 # Plugin integration (dry-run)
 # ---------------------------------------------------------------------------
+
 
 class TestPluginDryRun:
     def test_dry_run_config_loads(self) -> None:
@@ -317,48 +375,3 @@ class TestPluginDryRun:
         assert config.client_id == "demo_mercado_livre"
         assert config.settings.get("search_terms") == ["notebook dell", "iphone 15"]
         assert config.settings.get("max_results") == 10
-
-
-# ---------------------------------------------------------------------------
-# Authentication token
-# ---------------------------------------------------------------------------
-
-class TestAuthentication:
-    @responses.activate
-    def test_search_with_access_token(self) -> None:
-        """Search with an access token should send the Authorization header."""
-        from src.plugins.mercado_livre.scraper import MercadoLivreScraper
-
-        scraper = MercadoLivreScraper(access_token="test_token_123")
-
-        responses.get(
-            "https://api.mercadolibre.com/sites/MLB/search?q=notebook&limit=10",
-            json=SAMPLE_SEARCH_RESPONSE,
-            status=200,
-        )
-        responses.get(
-            "https://api.mercadolibre.com/users/12345",
-            json=SAMPLE_SELLER_RESPONSE,
-            status=200,
-        )
-        responses.get(
-            "https://api.mercadolibre.com/users/67890",
-            json={"id": 67890, "nickname": "VENDEDOR_XYZ"},
-            status=200,
-        )
-
-        results = scraper.search("notebook", max_results=10)
-        assert len(results) == 2
-        # Verify the Authorization header was sent
-        assert responses.calls[0].request.headers.get("Authorization") == "Bearer test_token_123"
-
-    @responses.activate
-    def test_403_error_logs_message(self, scraper: MercadoLivreScraper) -> None:
-        """403 error should log a helpful message and return empty."""
-        responses.get(
-            "https://api.mercadolibre.com/sites/MLB/search?q=test&limit=10",
-            status=403,
-        )
-
-        results = scraper.search("test", max_results=10)
-        assert results == []

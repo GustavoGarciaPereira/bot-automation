@@ -1,4 +1,4 @@
-"""Pydantic models for Mercado Livre product data."""
+"""Pydantic models for Mercado Livre product data scraped from HTML."""
 
 from __future__ import annotations
 
@@ -8,22 +8,19 @@ from pydantic import BaseModel, Field
 
 
 class Product(BaseModel):
-    """Represents a product from Mercado Livre."""
+    """Represents a product scraped from Mercado Livre HTML."""
 
-    id: str
     title: str
     price: float
     original_price: float | None = None
-    currency_id: str = "BRL"
-    seller_id: int | None = None
-    seller_name: str | None = None
-    reviews_count: int = 0
+    currency: str = "R$"
     rating: float | None = None
+    reviews_count: int | None = None
     free_shipping: bool = False
-    condition: str = "new"
-    permalink: str = ""
-    thumbnail: str = ""
-    available_quantity: int = 0
+    condition: str | None = None
+    seller: str | None = None
+    url: str = ""
+    image_url: str = ""
     collected_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -31,5 +28,5 @@ class SearchResult(BaseModel):
     """Represents a search result from Mercado Livre."""
 
     query: str
-    total: int
+    total_results: int | None = None
     products: list[Product]

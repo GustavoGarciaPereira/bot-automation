@@ -1,7 +1,7 @@
 """Mercado Livre platform plugin.
 
 Provides:
-- ``MercadoLivreScraper`` — API-based search and extraction
+- ``MercadoLivreScraper`` — Selenium-based HTML scraper
 - ``MercadoLivrePlugin`` — PortalPlugin adapter for the orchestrator
 - ``Product``, ``SearchResult`` — Pydantic data models
 """
