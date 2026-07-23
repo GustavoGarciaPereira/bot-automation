@@ -479,14 +479,17 @@ class GoogleMapsScraper(BaseScraper):
         return None
 
     def _is_valid_website(self, url: str) -> bool:
-        """Check if a URL is a valid external website (not Google tracking)."""
+        """Check if a URL is a real external website (not Google internal)."""
         if not url.startswith("http"):
             return False
-        skip_domains = [
-            "google.com/aclk", "googleadservices", "maps.google",
-            "accounts.google", "support.google", "policies.google",
+        url_lower = url.lower()
+        # Block all Google domains
+        google_patterns = [
+            "google.com", "google.com.br", "googleadservices",
+            "gstatic.com", "googleapis.com", "googleoptimize.com",
+            "googlesyndication.com", "doubleclick.net",
         ]
-        return not any(d in url for d in skip_domains)
+        return not any(p in url_lower for p in google_patterns)
 
     def _hours(self, item: Any) -> str | None:
         """REAL selector: span[style*='color: rgba(43,127,63']"""
