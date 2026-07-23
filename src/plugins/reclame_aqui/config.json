@@ -1,0 +1,7 @@
+{
+    "plugin_name": "reclame_aqui",
+    "headless": true,
+    "max_pages": 5,
+    "random_delay_min": 3,
+    "random_delay_max": 7
+}

@@ -19,5 +19,9 @@
     "atendimento": "Atendimento",
     "produto": "Qualidade",
     "cancelamento": "Cancelamento"
+  },
+  "settings": {
+    "company_slug": "magazine-luiza",
+    "max_pages": 3
   }
 }
