@@ -90,6 +90,9 @@ _NAME_SELECTORS = [
     "div[role='heading']",
     "div.Cw1rxb",
     "h3",
+    "a[aria-label]",
+    "a",
+    "div[class*='heading']",
 ]
 
 _CATEGORY_SELECTORS = [
@@ -116,6 +119,7 @@ _ADDRESS_SELECTORS = [
     "button[data-item-id='address'] span",
     "div[role='article'] button[data-item-id*='address']",
     "div[data-item-id='address']",
+    "div.W4Efsd",
 ]
 
 _PHONE_SELECTORS = [
@@ -129,7 +133,7 @@ _PHONE_SELECTORS = [
 _WEBSITE_SELECTORS = [
     "a[data-item-id='authority']",
     "a[aria-label*='site']",
-    "a[href*='http']:not([href*='google.com']):not([href*='maps']) a",
+    "a[href*='http']",
     "a[class*='website']",
 ]
 
@@ -394,22 +398,35 @@ class GoogleMapsScraper(BaseScraper):
                 el = item.find_element(By.CSS_SELECTOR, sel)
                 # Try aria-label first (it often has the clean name)
                 label = el.get_attribute("aria-label")
-                if label:
+                if label and len(label.strip()) > 2:
                     return label.strip()
                 text = el.text.strip()
-                if text:
+                if text and len(text) > 2:
                     return text
                 # For a.hfpxzc, sometimes the href has the name
                 href = el.get_attribute("href")
                 if href and "/maps/place/" in href:
-                    # Extract from URL: /maps/place/NAME/
                     import urllib.parse
                     parts = href.split("/maps/place/")
                     if len(parts) > 1:
                         name_part = parts[1].split("/")[0]
-                        return urllib.parse.unquote(name_part).replace("+", " ")
+                        decoded = urllib.parse.unquote(name_part).replace("+", " ")
+                        if decoded and len(decoded) > 2:
+                            return decoded
             except Exception:
                 continue
+
+        # Last resort: try any element with significant text
+        try:
+            all_text = item.text.strip()
+            if all_text and len(all_text) > 3:
+                # Take the first line or first sentence as name
+                first_line = all_text.split("\n")[0].strip()
+                if first_line and len(first_line) > 2:
+                    return first_line
+        except Exception:
+            pass
+
         return None
 
     def _category(self, item: Any) -> str | None:
@@ -482,8 +499,9 @@ class GoogleMapsScraper(BaseScraper):
         for sel in _WEBSITE_SELECTORS:
             try:
                 el = item.find_element(By.CSS_SELECTOR, sel)
-                href = el.get_attribute("href")
-                if href:
+                href = el.get_attribute("href") or ""
+                # Exclude Google tracking / ad links
+                if href and "google.com/aclk" not in href and "googleadservices" not in href:
                     return href
             except Exception:
                 continue
