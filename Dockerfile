@@ -1,29 +1,39 @@
-# =============================================================================
-# Autobot RPA — Dockerfile
-# =============================================================================
-# Build:  docker build -t autobot-rpa .
-# Run:    docker run --rm -e CLIENT_ID=demo_mercado_livre autobot-rpa
+FROM python:3.11-slim
 
-FROM python:3.12-slim
+# Install Chrome + deps for Selenium
+RUN apt-get update && apt-get install -y \
+    wget gnupg2 unzip curl \
+    fonts-liberation libasound2 libatk-bridge2.0-0 \
+    libatk1.0-0 libcups2 libdbus-1-3 libdrm2 \
+    libgbm1 libgtk-3-0 libnspr4 libnss3 \
+    libx11-xcb1 libxcomposite1 libxdamage1 \
+    libxrandr2 xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Chrome
+RUN wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get update \
+    && apt-get install -y /tmp/chrome.deb \
+    && rm /tmp/chrome.deb
+
+# Install ChromeDriver
+RUN CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+') \
+    && DRIVER_VERSION=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json" \
+       | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['channels']['Stable']['version'])") \
+    && wget -q "https://storage.googleapis.com/chrome-for-testing-public/${DRIVER_VERSION}/linux64/chromedriver-linux64.zip" -O /tmp/chromedriver.zip \
+    && unzip /tmp/chromedriver.zip -d /tmp/ \
+    && mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/ \
+    && chmod +x /usr/local/bin/chromedriver \
+    && rm -rf /tmp/chromedriver*
 
 WORKDIR /app
 
-# System deps for Chrome + Selenium
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Python deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# App code
-COPY src/ ./src/
-COPY clients/ ./clients/
+COPY . .
 
-# Data dirs (mounted as volumes in production, but created for dev)
-RUN mkdir -p /app/data/output /app/data/logs
+RUN mkdir -p data/logs output
 
-ENTRYPOINT ["python", "-m", "src.main"]
-CMD ["--client-id", "demo_mercado_livre"]
+ENTRYPOINT ["python", "src/main.py"]
+CMD ["--list-clients"]

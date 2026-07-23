@@ -1,562 +1,197 @@
-# 🤖 Autobot RPA — Extração Genérica de Dados Multi-Plataforma
+# 🤖 Autobot RPA
 
-**Sistema RPA multi-tenant, 100% configurável, para extração de dados em múltiplas plataformas web.**
+> Extração automatizada de dados de múltiplas plataformas web.
+> Um código, N clientes, N plataformas.
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![Pydantic](https://img.shields.io/badge/pydantic-v2-ff69b4)](https://docs.pydantic.dev/latest/)
-[![Selenium](https://img.shields.io/badge/selenium-4.15%2B-green)](https://www.selenium.dev/)
-[![LangChain](https://img.shields.io/badge/langchain-0.1%2B-orange)](https://www.langchain.com/)
-[![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
-
----
-
-## 📖 Índice
-
-- [Visão Geral](#-visão-geral)
-- [Arquitetura](#-arquitetura)
-- [Fluxo de Execução](#-fluxo-de-execução)
-- [Estrutura de Pastas](#-estrutura-de-pastas)
-- [Stack Tecnológica](#-stack-tecnológica)
-- [Instalação](#-instalação)
-- [Configuração](#-configuração)
-- [Uso](#-uso)
-- [Criando um Novo Plugin](#-criando-um-novo-plugin)
-- [Classificação (De-Para)](#-classificação-de-para)
-- [Segurança](#-segurança)
-- [Docker](#-docker)
-- [Testes](#-testes)
-- [Logs & Debug](#-logs--debug)
+![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
+![Selenium](https://img.shields.io/badge/Selenium-4.15+-green?logo=selenium)
+![Pydantic](https://img.shields.io/badge/Pydantic-2.5+-purple)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)
+![Tests](https://img.shields.io/badge/Tests-84+-brightgreen)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
 ---
 
-## 🎯 Visão Geral
+## 🎯 O que faz
 
-O **Autobot RPA** automatiza a extração de dados de múltiplas plataformas web (Mercado Livre, Google Maps, Reclame Aqui, etc.), para múltiplos clientes simultaneamente, com **zero código específico por cliente**.
+O **Autobot RPA** extrai dados de plataformas web automaticamente usando **Selenium**,
+sem necessidade de APIs oficiais. Cada plataforma é um **plugin** independente.
+O comportamento é 100% configurável via **JSON** — zero código por cliente.
 
-### Plataformas suportadas
+### Plataformas Suportadas
 
-| Plataforma | Tipo | Plugin |
-|---|---|---|
-| **Mercado Livre** | E-commerce | `mercado_livre` |
-| **Google Maps** | Geografia/Locais | `google_maps` |
-| **Reclame Aqui** | Reclamações | `reclame_aqui` |
-
-### Princípios Fundamentais
-
-| Princípio | Descrição |
-|---|---|
-| **100% Genérico** | Nenhum nome de cliente ou plataforma está hardcoded |
-| **Multi-Tenant** | Um único código-base atende N clientes (`--client-id`) |
-| **Config-Driven** | Comportamento definido em JSON externo |
-| **Headless** | Roda em terminal/serviço, sem interface gráfica |
-| **IA como Aprimoramento** | LLM é opcional — se falhar, fallback para classificação manual |
-| **Resiliente** | Erro em uma plataforma não derruba a execução inteira |
-
-### Saída
-
-Uma **planilha Excel unificada** (`data/output/<client_id>/records_YYYY-MM-DD.xlsx`) com colunas padronizadas, opcionalmente enviada por e-mail ao final da execução.
+| Plugin | Dados extraídos | Status |
+|--------|----------------|--------|
+| 🛒 **Mercado Livre** | Produtos, preços, frete, vendedor, avaliações | ✅ |
+| 🗺️ **Google Maps** | Empresas, endereço, telefone, website, rating | ✅ |
+| 📦 **OLX Brasil** | Anúncios, preços, localização, data | ✅ |
 
 ---
 
 ## 🏗️ Arquitetura
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      CLI (main.py)                          │
-│              argparse: --client-id, --no-headless           │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│                   RPAOrchestrator                            │
-│   Pipeline: config → plugins → classify → Excel → email     │
-└──────┬──────────┬──────────┬──────────────┬─────────────────┘
-       │          │          │              │
-┌──────▼──┐ ┌─────▼───┐ ┌───▼──────┐ ┌─────▼──────┐
-│ Config  │ │ Plugins │ │Classifier│ │ ExcelWriter │
-│ Manager │ │(Adapters│ │(Hybrid)  │ │ (Pandas)    │
-│ (JSON)  │ │ Selenium│ │Regex→LLM │ │             │
-└─────────┘ └─────────┘ └──────────┘ └─────────────┘
+src/
+├── interfaces/          # Contratos abstratos (ABCs)
+│   └── scraper.py       # BaseScraper: search() + extract()
+├── plugins/             # Implementações por plataforma
+│   ├── base_selenium_plugin.py  # Driver + anti-detecção
+│   ├── mercado_livre/
+│   ├── google_maps/
+│   └── olx/
+├── services/            # Classificador IA, Exportação Excel
+├── models.py            # Pydantic models
+├── orchestrator.py      # Pipeline principal
+└── main.py              # CLI entry point
 ```
 
-### Padrão Hexagonal (Ports & Adapters)
+### Princípios
 
-```
-┌──────────────────────────────────────┐
-│           DOMAIN (models.py)         │
-│  ClienteConfig, IntimacaoRecord,     │
-│  PortalType, Advogado                │
-└────────────────┬─────────────────────┘
-                 │
-    ┌────────────┼────────────┐
-    │            │            │
-┌───▼────┐ ┌─────▼────┐ ┌────▼─────┐
-│ PORT   │ │  PORT    │ │  PORT    │
-│Portal  │ │Classifier│ │Output    │
-│Plugin  │ │          │ │Writer    │
-│(ABC)   │ │(ABC)     │ │(ABC)     │
-└───┬────┘ └─────┬────┘ └────┬─────┘
-    │            │            │
-┌───▼────────┐ ┌─▼──────────┐ ┌▼──────────┐
-│ ADAPTERS   │ │ ADAPTERS   │ │ ADAPTERS  │
-│ Mercado    │ │ Hybrid     │ │ Excel     │
-│ Livre      │ │ Classifier │ │ Writer    │
-│ Google Maps│ │ (Regex+LLM)│ │ (Pandas)  │
-│ Reclame    │ │            │ │           │
-│ Aqui       │ │            │ │           │
-└────────────┘ └────────────┘ └───────────┘
-```
+- **100% Genérico** — nenhum nome de cliente no código
+- **Config-Driven** — comportamento via JSON em `clients/`
+- **Plugin Architecture** — cada plataforma é independente
+- **Anti-Detecção** — Selenium com stealth (User-Agent, CDP, delays aleatórios)
+- **Resiliente** — erro em um plugin não derruba a execução
+- **Debugável** — screenshot + HTML salvos em caso de erro
 
 ---
 
-## 🔄 Fluxo de Execução
+## 🚀 Como Rodar
 
-Cada execução do RPA segue esta pipeline:
+### Pré-requisitos
 
-```
-1. INIT        main.py carrega --client-id e o JSON correspondente
-       │
-2. CONFIG      ClienteConfig.load() → cache em memória
-       │
-3. ORCHESTRATE Para cada Advogado × Plataforma ativa:
-       │
-       ├─ 3a. AUTH       authenticate() → login (se necessário)
-       ├─ 3b. FETCH      fetch_intimations() → lista de dicts brutos
-       ├─ 3c. PROCESS    process_intimation() → IntimacaoRecord
-       └─ 3d. ACTION     take_action() → ação específica da plataforma
-       │
-4. CLASSIFY    HybridClassifier em todos os registros (concorrente)
-       │         Regex (keyword match) → LLM (DeepSeek/GPT) → MANUAL
-       │
-5. WRITE       ExcelWriter → data/output/<client_id>/records_<data>.xlsx
-       │
-6. NOTIFY      SMTP → anexa planilha e envia para emails_destino
-```
+- Python 3.11+
+- Google Chrome instalado
+- ChromeDriver (compatível com sua versão do Chrome)
 
----
-
-## 📁 Estrutura de Pastas
-
-```
-autobot-rpa/
-├── src/
-│   ├── main.py                      # Entrypoint CLI
-│   ├── orchestrator.py              # Pipeline principal
-│   ├── config_manager.py            # Carregador de JSONs (com cache)
-│   ├── models.py                    # Pydantic v2: todos os modelos
-│   │
-│   ├── interfaces/                  # 🔌 Ports (contratos abstratos)
-│   │   ├── portal_plugin.py         #   ABC para plugins de plataforma
-│   │   ├── scraper.py              #   ABC para scrapers (search/extract)
-│   │   ├── classifier.py            #   ABC para classificadores
-│   │   └── output_writer.py         #   ABC para persistência
-│   │
-│   ├── plugins/                     # 🔧 Adapters (implementações)
-│   │   ├── base_selenium_plugin.py  #   Helpers: waits, retry, screenshots
-│   │   ├── mercado_livre/           #   Plugin Mercado Livre
-│   │   │   └── plugin.py
-│   │   ├── google_maps/             #   Plugin Google Maps
-│   │   │   └── plugin.py
-│   │   └── reclame_aqui/            #   Plugin Reclame Aqui
-│   │       └── plugin.py
-│   │
-│   ├── services/                    # 🧠 Lógica de negócio
-│   │   ├── classifier_service.py    #   Hybrid: Regex → LLM → Manual
-│   │   ├── llm_client.py            #   LangChain (DeepSeek/OpenAI/Azure)
-│   │   └── excel_writer.py          #   Pandas + openpyxl formatado
-│   │
-│   ├── security/                    # 🔐 Credenciais
-│   │   ├── credential_vault.py      #   Keyring → .env fallback
-│   │   └── certificate_handler.py   #   Certificados .pfx/A3
-│   │
-│   └── utils/                       # 🛠️ Utilitários
-│       ├── logger.py                #   JSON lines + rotação diária
-│       └── email_2fa_handler.py     #   IMAP polling para 2FA
-│
-├── clients/                         # ⚙️ Configs dos clientes
-│   ├── demo_mercado_livre.json      #   Config Mercado Livre
-│   ├── demo_google_maps.json        #   Config Google Maps
-│   └── demo_reclame_aqui.json       #   Config Reclame Aqui
-│
-├── tests/
-│   ├── test_models.py               # Testes de validação Pydantic
-│   └── test_classifier.py           # Testes do classificador híbrido
-│
-├── data/
-│   ├── output/                      # Planilhas geradas
-│   └── logs/                        # Logs JSON + screenshots de erro
-│
-├── requirements.txt                 # Dependências com versões fixas
-├── docker-compose.yml               # Selenium Grid 4 + App
-├── Dockerfile                       # Python 3.12-slim
-├── pyproject.toml                   # Config pytest
-├── .env                             # Variáveis de ambiente (template)
-└── .gitignore
-```
-
----
-
-## 🧰 Stack Tecnológica
-
-| Camada | Tecnologia | Versão |
-|---|---|---|
-| **Linguagem** | Python | 3.10+ |
-| **Modelos** | Pydantic | 2.5+ |
-| **Web Scraping** | Selenium + WebDriverWait / Requests | 4.15+ / 2.31+ |
-| **IA / LLM** | LangChain + ChatOpenAI | 0.1+ |
-| **Excel** | Pandas + OpenPyXL | 2.1+ / 3.1+ |
-| **Credenciais** | keyring → python-dotenv | 24+ / 1.0+ |
-| **Resiliência** | tenacity (exponential backoff) | 8.2+ |
-| **Testes** | pytest + pytest-asyncio | 8.0+ |
-| **Container** | Docker + Selenium Grid 4 | — |
-
----
-
-## 🚀 Instalação
+### Instalação
 
 ```bash
-# 1. Clone o repositório
-git clone <repo-url>
-cd autobot-rpa
-
-# 2. Crie o ambiente virtual
-python3 -m venv venv
-source venv/bin/activate  # Linux/macOS
+git clone https://github.com/GustavoGarciaPereira/bot-automation.git
+cd bot-automation
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
 # venv\Scripts\activate   # Windows
-
-# 3. Instale as dependências
 pip install -r requirements.txt
+```
 
-# 4. Configure o .env
-cp .env .env.local
-# Edite .env.local com suas chaves (DeepSeek, email, etc.)
+### Uso Básico
+
+```bash
+# Lista clientes configurados
+python src/main.py --list-clients
+
+# Roda extração para um cliente
+python src/main.py --client-id demo_mercado_livre
+python src/main.py --client-id demo_google_maps
+python src/main.py --client-id demo_olx
+
+# Dry run (valida config sem executar)
+python src/main.py --client-id demo_olx --dry-run
+```
+
+### Scripts de Validação (dados reais)
+
+```bash
+python scripts/test_ml_real.py              # Mercado Livre (headless)
+python scripts/test_maps_real.py --visible  # Google Maps
+python scripts/test_olx_real.py --visible   # OLX
+```
+
+### Docker
+
+```bash
+docker compose build
+docker compose run bot --client-id demo_mercado_livre
+docker compose run bot --client-id demo_olx
+docker compose run bot --list-clients
+```
+
+### Makefile
+
+```bash
+make test        # Roda testes
+make run-ml      # Valida ML
+make run-maps    # Valida Maps
+make run-olx     # Valida OLX
+make clean       # Limpa cache e logs
 ```
 
 ---
 
 ## ⚙️ Configuração
 
-### 1. Variáveis de Ambiente (`.env`)
+Cada cliente tem um JSON em `clients/`:
 
-```bash
-# LLM — DeepSeek (recomendado, mais barato e melhor em português)
-LLM_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL=deepseek-chat
-LLM_TEMPERATURE=0.0
-
-# Email — senha de app para SMTP (envio de relatórios)
-EMAIL_APP_PASSWORD=your-app-password
-```
-
-### 2. Configuração do Cliente (`clients/demo_mercado_livre.json`)
-
-```jsonc
+```json
 {
-  "client_id": "demo_mercado_livre",        // identificador único
-  "nome_escritorio": "Demo - Mercado Livre",
-  "use_ai_classifier": true,                 // habilitar IA para classificação
-
-  "advogados": [
-    {
-      "nome": "Bot ML",
-      "usuario": null,
-      "senha_ref": "VAULT:DEMO",
-      "certificado_path": null,
-      "email_2fa": null
-    }
-  ],
-
-  "portais_ativos": ["mercado_livre"],
-
-  "emails_destino": ["demo@example.com"],
-
-  // Regras de classificação: palavra-chave → categoria
-  "classification_rules": {
-    "notebook": "Informática",
-    "iphone": "Celulares",
-    "tv": "Eletrônicos"
+  "client_id": "demo_olx",
+  "nome_escritorio": "Demo - OLX",
+  "advogados": [{"nome": "Bot", "senha_ref": "VAULT:DEMO"}],
+  "portais_ativos": ["olx"],
+  "settings": {
+    "search_terms": ["notebook dell", "iphone 15"],
+    "max_results": 15
   }
 }
 ```
 
-### 3. Prioridade de Credenciais
-
-```
-1. Windows Credential Manager  (keyring → target="rpa_core", username=<senha_ref>)
-2. Variáveis de Ambiente       (.env → <senha_ref>)
-3. Erro                        (KeyError — execução interrompida)
-```
-
----
-
-## 🖥️ Uso
-
-```bash
-# Ativar ambiente virtual
-source venv/bin/activate
-
-# Dry-run (validar configuração sem executar)
-python -m src.main --client-id demo_mercado_livre --dry-run
-
-# Execução headless (padrão)
-python -m src.main --client-id demo_mercado_livre
-
-# Com navegador visível (debug)
-python -m src.main --client-id demo_mercado_livre --no-headless
-
-# Usando Selenium Grid remoto
-python -m src.main --client-id demo_mercado_livre --remote-selenium http://localhost:4444
-
-# Listar clientes disponíveis
-python -m src.main --list-clients
-
-# Via variável de ambiente
-CLIENT_ID=demo_mercado_livre python -m src.main
-```
-
-### Dry-run
-
-O modo `--dry-run` valida a configuração e o carregamento dos plugins sem executar scraping:
-
-```bash
-python -m src.main --client-id demo_mercado_livre --dry-run
-# ✓ DRY RUN — demo_mercado_livre: configuration OK
-```
-
-### Saída esperada (execução completa)
-
-```
-17:06:19 | INFO | main | Autobot RPA starting — client=demo_mercado_livre
-17:06:20 | INFO | orchestrator | Pipeline started | lawyers=1 | platforms=1
-17:06:21 | INFO | orchestrator | → Bot ML | mercado_livre | authenticating …
-17:06:22 | INFO | mercado_livre | ✅ Autenticado com sucesso.
-17:06:23 | INFO | orchestrator | → Bot ML | mercado_livre | fetched 10 raw records
-17:06:24 | INFO | orchestrator | Pipeline finished | records=10 | elapsed=2.1s
-17:06:24 | INFO | main | ✓ Done — data/output/demo_mercado_livre/records_2026-07-06.xlsx
-```
-
----
-
-## 🔌 Criando um Novo Plugin
-
-Para adicionar uma nova plataforma (ex: Amazon, Buscapé, etc.):
-
-### Passo 1 — Criar a classe
-
-```python
-# src/plugins/minha_plataforma/plugin.py
-from src.interfaces.portal_plugin import PortalPlugin
-from src.models import Advogado, IntimacaoRecord, PortalType
-
-class MinhaPlataformaPlugin(PortalPlugin):
-
-    @property
-    def portal_type(self) -> PortalType:
-        return PortalType.MERCADO_LIVRE  # ou adicione um novo no enum
-
-    @property
-    def portal_name(self) -> str:
-        return "Minha Plataforma"
-
-    def __init__(self, headless: bool = True, remote_url: str | None = None):
-        self.headless = headless
-        self.remote_url = remote_url
-
-    async def authenticate(self, advogado, config) -> bool:
-        ...
-
-    async def fetch_intimations(self, advogado, data_ref) -> list[dict]:
-        ...
-
-    async def process_intimation(self, raw, advogado) -> IntimacaoRecord:
-        ...
-
-    async def take_action(self, record, advogado) -> None:
-        ...
-
-    async def cleanup(self) -> None:
-        ...
-```
-
-### Passo 2 — Registrar no orquestrador
-
-```python
-# src/orchestrator.py — adicione ao PLUGIN_REGISTRY
-PLUGIN_REGISTRY[PortalType.MINHA_PLATAFORMA] = "src.plugins.minha_plataforma.plugin.MinhaPlataformaPlugin"
-```
-
-### Passo 3 — Adicionar ao enum
-
-```python
-# src/models.py
-class PortalType(str, Enum):
-    MERCADO_LIVRE = "mercado_livre"
-    GOOGLE_MAPS = "google_maps"
-    RECLAME_AQUI = "reclame_aqui"
-    MINHA_PLATAFORMA = "minha_plataforma"  # novo
-```
-
-### Passo 4 — Ativar na config do cliente
-
-```json
-{
-  "portais_ativos": ["mercado_livre", "minha_plataforma"]
-}
-```
-
-### Regras para plugins
-
-| Regra | Detalhe |
-|---|---|
-| **Waits explícitos** | `WebDriverWait` com timeout 30s. **Nunca** `time.sleep()` |
-| **Selectors robustos** | Prefira `By.XPATH` ou `By.CSS_SELECTOR` |
-| **Headless** | Use `self.headless` — nunca hardcode |
-| **2FA** | Use `Email2FAHandler.wait_for_code()` |
-| **Erro → screenshot** | `base_selenium_plugin` já salva em `data/logs/` |
-| **Retry** | Use o decorator `@retry_on_transient` do `base_selenium_plugin` |
-
----
-
-## 🧠 Classificação (De-Para)
-
-O `HybridClassifier` opera em 3 estágios:
-
-```
-1. REGEX (custo zero)
-   ├─ Itera as classification_rules do JSON
-   ├─ keyword in texto.lower() → match exato
-   └─ Confiança: 1.0
-
-2. LLM (opcional, se use_ai_classifier=true)
-   ├─ Envia prompt com lista de categorias
-   ├─ Valida que resposta é uma categoria conhecida
-   └─ Confiança: ai_fallback_threshold (default 0.8)
-
-3. FALLBACK
-   └─ Retorna "CLASSIFICACAO_MANUAL" / 0.0
-      O analista revisa depois na planilha
-```
-
-### Provedores LLM suportados
-
-| Prioridade | Provedor | Variável |
-|---|---|---|
-| 1 | **DeepSeek** | `LLM_API_KEY` |
-| 2 | Azure OpenAI | `AZURE_OPENAI_API_KEY` |
-| 3 | OpenAI | `OPENAI_API_KEY` |
-
-Se nenhuma chave for configurada → classificação somente por regex (sem IA).
-
----
-
-## 🔐 Segurança
-
-### Credential Vault
-
-```
-┌──────────────────────────────┐
-│ 1. Windows Credential Manager │  ← keyring (produção)
-│    target: "rpa_core"         │
-│    username: <senha_ref>      │
-├──────────────────────────────┤
-│ 2. Environment Variables      │  ← .env (dev/fallback)
-│    <senha_ref>=<valor>        │
-├──────────────────────────────┤
-│ 3. KeyError                   │  ← execução interrompida
-└──────────────────────────────┘
-```
-
-### Certificados Digitais
-
-```python
-from src.security.certificate_handler import CertificateHandler
-
-cert = CertificateHandler.load(
-    "certs/advogado.pfx",
-    password_ref="VAULT:CERT_PASSWORD"
-)
-```
-
----
-
-## 🐳 Docker
-
-### Subir Selenium Grid + Rodar RPA
-
-```bash
-# 1. Iniciar o Grid
-docker compose up -d selenium-hub chrome-node
-
-# 2. Rodar o RPA (one-shot)
-docker compose run --rm rpa --client-id demo_mercado_livre
-
-# 3. Ou tudo junto
-CLIENT_ID=demo_mercado_livre docker compose up
-
-# 4. Parar tudo
-docker compose down
-```
-
-### Serviços no `docker-compose.yml`
-
-| Serviço | Porta | Descrição |
-|---|---|---|
-| `selenium-hub` | 4444 | Selenium Grid Hub |
-| `chrome-node` | 5900 | Chrome + VNC (debug visual) |
-| `rpa` | — | App Python (executa e sai) |
+Para adicionar um novo cliente, crie um novo JSON em `clients/`.
+Nenhuma linha de código precisa ser alterada.
 
 ---
 
 ## 🧪 Testes
 
 ```bash
-# Todos os testes
-pytest
+python -m pytest tests/ -v
+```
 
-# Apenas modelos
-pytest tests/test_models.py -v
+**84+ testes** cobrindo:
+- Parsing de HTML (mockado sem Selenium real)
+- Modelos Pydantic (validação de dados)
+- Price parsing (formato brasileiro: `R$ 1.200`, `R$ 3.499,90`)
+- Localização, data, extração de telefone/website
+- Fallbacks de selectors CSS
+- Config loading e dry-run
 
-# Apenas classificador
-pytest tests/test_classifier.py -v
+---
 
-# Com coverage
-pytest --cov=src --cov-report=term-missing
+## 📁 Estrutura de Output
+
+```
+output/
+└── {client_id}_{timestamp}.xlsx     # Relatório Excel
+
+data/logs/
+├── {plugin}_debug_{ts}.html         # HTML da página (debug)
+├── {plugin}_debug_{ts}.png          # Screenshot (debug)
+└── {plugin}_items_{ts}/             # Cards individuais (debug)
 ```
 
 ---
 
-## 📊 Logs & Debug
+## 🗺️ Roadmap
 
-### Formato
-
-Logs usam **JSON lines** para ingestão em ELK / Splunk / Datadog:
-
-```json
-{"ts": "2026-07-06T20:06:19.123Z", "level": "INFO", "logger": "orchestrator",
- "msg": "Pipeline finished | records=10 | elapsed=2.1s | output=data/output/..."}
-```
-
-### Localização
-
-| Artefato | Caminho |
-|---|---|
-| Logs diários | `data/logs/execution_YYYY-MM-DD.log` |
-| Screenshots de erro | `data/logs/screenshot_error_YYYYMMDD_HHMMSS.png` |
-| Planilhas | `data/output/<client_id>/records_YYYY-MM-DD.xlsx` |
-
-### Rotação
-
-- **Tamanho máximo:** 10 MiB por arquivo
-- **Backups:** 30 arquivos mantidos
-- **Console:** nível INFO (stderr, formato legível)
-- **Arquivo:** nível DEBUG (JSON)
+- [x] Plugin Mercado Livre
+- [x] Plugin Google Maps
+- [x] Plugin OLX Brasil
+- [ ] Classificação com IA (LLM)
+- [ ] Alertas (email / Telegram)
+- [ ] Cross-reference entre plataformas
+- [ ] Dashboard web
+- [ ] API REST
 
 ---
 
 ## 📄 Licença
 
-MIT — veja o arquivo [LICENSE](LICENSE) (se disponível).
+MIT
 
 ---
 
-**Feito com ☕ e Python. 100% genérico, 0% hardcoded.**
+## 👨‍💻 Autor
+
+**Gustavo Garcia Pereira**
+
+- GitHub: [@GustavoGarciaPereira](https://github.com/GustavoGarciaPereira)

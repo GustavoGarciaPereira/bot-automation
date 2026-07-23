@@ -1,77 +1,16 @@
-# =============================================================================
-# Autobot RPA — Docker Compose (Selenium Grid + App)
-# =============================================================================
-#
-# Usage:
-#   docker compose up -d selenium-hub chrome-node    # start grid
-#   docker compose run --rm rpa --client-id demo_mercado_livre
-#
-# Or run everything together:
-#   CLIENT_ID=demo_mercado_livre docker compose up
-
-version: "3.9"
+version: "3.8"
 
 services:
-  # --------------------------------------------------------------------------
-  # Selenium Grid 4 — Hub
-  # --------------------------------------------------------------------------
-  selenium-hub:
-    image: selenium/hub:4.18
-    container_name: selenium-hub
-    ports:
-      - "4442:4442"
-      - "4443:4443"
-      - "4444:4444"
-    environment:
-      - SE_SESSION_REQUEST_TIMEOUT=300
-      - SE_SESSION_RETRY_INTERVAL=5
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4444/status"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-
-  # --------------------------------------------------------------------------
-  # Chrome Node
-  # --------------------------------------------------------------------------
-  chrome-node:
-    image: selenium/node-chrome:4.18
-    container_name: chrome-node
-    depends_on:
-      selenium-hub:
-        condition: service_healthy
-    environment:
-      - SE_EVENT_BUS_HOST=selenium-hub
-      - SE_EVENT_BUS_PUBLISH_PORT=4442
-      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
-      - SE_NODE_MAX_SESSIONS=4
-      - SE_NODE_SESSION_TIMEOUT=120
-      - SE_VNC_NO_PASSWORD=1
-    shm_size: "2gb"
-    ports:
-      - "5900:5900"   # VNC (connect with vncviewer localhost:5900)
-    volumes:
-      - /dev/shm:/dev/shm
-
-  # --------------------------------------------------------------------------
-  # RPA App (one-shot — runs and exits)
-  # --------------------------------------------------------------------------
-  rpa:
-    build:
-      context: .
-      dockerfile: Dockerfile
+  bot:
+    build: .
     container_name: autobot-rpa
-    depends_on:
-      selenium-hub:
-        condition: service_healthy
-    environment:
-      - CLIENT_ID=${CLIENT_ID:-demo_mercado_livre}
-      - SELENIUM_REMOTE_URL=http://selenium-hub:4444
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - EMAIL_APP_PASSWORD=${EMAIL_APP_PASSWORD:-}
     volumes:
-      - ./clients:/app/clients:ro
-      - ./data/output:/app/data/output
+      - ./output:/app/output
       - ./data/logs:/app/data/logs
-      - ./.env:/app/.env:ro
-    command: ["python", "-m", "src.main", "--client-id", "${CLIENT_ID:-demo_mercado_livre}"]
+      - ./clients:/app/clients
+    env_file:
+      - .env
+    shm_size: "2gb"
+    environment:
+      - DISPLAY=:99
+    command: ["--client-id", "demo_mercado_livre"]
