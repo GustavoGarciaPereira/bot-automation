@@ -5,7 +5,7 @@
 # ============================================================
 # Container:  div[class*='AdCard'] → 50 found
 # Title:      h2 or h3 inside card
-# Price:      "R$ 3.800" text → regex r'R\$\s*([\d.,]+)'
+# Price:      "R$ 3.800" text extracted via regex
 # Location:   "São Paulo - SP" → regex Cidade - UF
 # Date:       "Hoje, 00:45" → regex (Hoje|Ontem|\d{2}/\d{2})
 # Image:      img[src*='img.olx.com.br']
@@ -182,22 +182,52 @@ class OLXScraper(BaseScraper):
         if not text:
             return None
 
-        # 1. Title: CSS selectors first, then text fallback
-        title = self._try_selectors(card, _TITLE_SELECTORS)
+        # 1. Title: specific CSS selectors, then generic, then text fallback
+        title = self._try_selectors(card, [
+            "h2 a",
+            "h2",
+            "h3 a",
+            "h3",
+            "a[href*='/anuncio/']",
+            "[class*='title'] a",
+            "[class*='Title'] a",
+            "a span",
+            "a",
+        ])
         if not title:
             lines = [l.strip() for l in text.split("\n") if l.strip()]
+            # Skip common UI text and short lines
+            skip_words = [
+                "adicionar", "compartilhar", "favoritar", "favorito",
+                "curtir", "salvar", "comprar", "ver mais",
+                "telefone", "whatsapp", "mensagem",
+            ]
             for line in lines:
-                if len(line) > 15 and not re.match(r"^R?\$", line):
-                    title = line
-                    break
+                if len(line) < 10:
+                    continue
+                if any(w in line.lower() for w in skip_words):
+                    continue
+                if re.match(r"^R?\$", line):
+                    continue
+                # Looks like a title
+                title = line
+                break
 
-        # 2. Price: regex (most reliable)
-        price = self._extract_price(text)
+        if not title:
+            logger.debug("OLX: no title found. Text preview: %s", text[:100])
+            # Still parse price — item may be valid with just price
+            price = self._extract_price(text)
+            if price is None:
+                return None
+            title = "Sem título"
+        else:
+            # 2. Price
+            price = self._extract_price(text)
 
-        # 3. Location: regex
+        # 3. Location
         location = self._extract_location(text)
 
-        # 4. Date: regex
+        # 4. Date
         date = self._extract_date(text)
 
         # 5. Link
@@ -214,12 +244,8 @@ class OLXScraper(BaseScraper):
             "img",
         ], "src")
 
-        # Minimum criterion: has title OR price
-        if not title and price is None:
-            return None
-
         return OLXAd(
-            title=title or "Sem título",
+            title=title,
             price=price,
             location=location or None,
             date=date or None,
