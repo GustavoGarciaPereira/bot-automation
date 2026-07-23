@@ -70,13 +70,20 @@ def _clear_config_cache() -> None:
 
 
 _CONTAINER_SELECTORS = [
+    "section.olx-adcard",
+    "div.olx-adcard__content",
     "div[class*='AdCard']",
     "div[data-testid='ad-card']",
-    "div.ad-card",
-    "div[class*='card']",
 ]
 
-_TITLE_SELECTORS = ["h2", "h3", "[class*='title']", "[class*='Title']"]
+_TITLE_SELECTORS = [
+    "a[data-testid='adcard-link']",
+    "a.olx-adcard__link",
+    "h2.olx-adcard__title",
+    "[class*='adcard__title']",
+    "h2",
+    "a[title]",
+]
 
 
 class OLXScraper(BaseScraper):
@@ -182,18 +189,10 @@ class OLXScraper(BaseScraper):
         if not text:
             return None
 
-        # 1. Title: specific CSS selectors, then generic, then text fallback
-        title = self._try_selectors(card, [
-            "h2 a",
-            "h2",
-            "h3 a",
-            "h3",
-            "a[href*='/anuncio/']",
-            "[class*='title'] a",
-            "[class*='Title'] a",
-            "a span",
-            "a",
-        ])
+        # 1. Title: CSS selectors, then img alt / link title, then text fallback
+        title = self._try_selectors(card, _TITLE_SELECTORS)
+        if not title:
+            title = self._try_attr(card, ["img[alt]", "a[title]"], "alt", "title")
         if not title:
             lines = [l.strip() for l in text.split("\n") if l.strip()]
             # Skip common UI text and short lines
