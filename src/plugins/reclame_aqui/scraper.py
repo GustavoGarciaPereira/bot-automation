@@ -186,9 +186,10 @@ class ReclameAquiScraper(BaseScraper):
 
         for page in range(1, max_pages + 1):
             logger.info("RA: fetching page %d for %s", page, company_slug)
-            url = f"{self._cfg['base_url']}/empresa/{company_slug}/"
-            if page > 1:
-                url = f"{self._cfg['base_url']}/empresa/{company_slug}/?pagina={page}"
+            if page == 1:
+                url = f"{self._cfg['base_url']}/empresa/{company_slug}/reclamacoes"
+            else:
+                url = f"{self._cfg['base_url']}/empresa/{company_slug}/reclamacoes?pagina={page}"
 
             html = await asyncio.get_running_loop().run_in_executor(
                 None, self._fetch_page, url
@@ -202,7 +203,12 @@ class ReclameAquiScraper(BaseScraper):
             logger.info("RA page %d: %d cards found", page, len(cards))
 
             if not cards:
-                break
+                logger.warning(
+                    "RA: no complaint cards found on page %d. "
+                    "Reclame Aqui is a JavaScript-rendered SPA. "
+                    "Data may not be available via HTTP scraping.",
+                    page,
+                )
 
             for card in cards:
                 c = self._parse_card(card, company_slug)
@@ -294,7 +300,12 @@ class ReclameAquiScraper(BaseScraper):
                 timeout=self._cfg.get("timeout_seconds", 30),
             )
             if resp.status_code != 200:
-                logger.warning("RA HTTP %d for %s", resp.status_code, url)
+                logger.warning(
+                    "RA HTTP %d for %s. "
+                    "Reclame Aqui is a JS-rendered SPA behind CloudFlare. "
+                    "Try accessing the URL in a browser to verify it exists.",
+                    resp.status_code, url,
+                )
                 return None
             return resp.text
         except Exception as exc:
