@@ -1,0 +1,17 @@
+{
+  "client_id": "demo_google_shopping",
+  "nome_escritorio": "Demo - Google Shopping",
+  "use_ai_classifier": true,
+  "advogados": [
+    {"nome": "Bot Shop", "usuario": null, "senha_ref": "VAULT:DEMO", "certificado_path": null, "email_2fa": null}
+  ],
+  "portais_ativos": ["google_shopping"],
+  "emails_destino": ["demo@example.com"],
+  "classification_rules": {
+    "notebook": "Informática", "iphone": "Celulares"
+  },
+  "settings": {
+    "search_terms": ["notebook dell", "iphone 15"],
+    "max_results": 15
+  }
+}

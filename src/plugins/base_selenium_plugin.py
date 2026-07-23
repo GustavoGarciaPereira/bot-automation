@@ -104,14 +104,8 @@ async def selenium_driver(
         logger.info("Remote WebDriver connected → %s", remote_url)
     else:
         opts = _build_chrome_options(headless)
-        # Try undetected-chromedriver (better CloudFlare/anti-bot bypass)
-        try:
-            import undetected_chromedriver as uc
-            driver = uc.Chrome(options=opts)
-            logger.info("Local uc.Chrome started (headless=%s, undetected)", headless)
-        except ImportError:
-            driver = webdriver.Chrome(options=opts)
-            logger.info("Local ChromeDriver started (headless=%s)", headless)
+        driver = webdriver.Chrome(options=opts)
+        logger.info("Local ChromeDriver started (headless=%s)", headless)
 
     driver.implicitly_wait(2)
 

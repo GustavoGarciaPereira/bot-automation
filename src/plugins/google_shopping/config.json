@@ -1,0 +1,9 @@
+{
+    "plugin_name": "google_shopping",
+    "base_url": "https://www.google.com/search",
+    "headless": true,
+    "timeout_seconds": 30,
+    "max_scrolls": 3,
+    "random_delay_min": 2,
+    "random_delay_max": 4
+}

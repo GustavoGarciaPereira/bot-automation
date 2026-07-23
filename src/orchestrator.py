@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 PLUGIN_REGISTRY: dict[PortalType, str] = {
     PortalType.MERCADO_LIVRE: "src.plugins.mercado_livre.plugin.MercadoLivrePlugin",
     PortalType.GOOGLE_MAPS: "src.plugins.google_maps.plugin.GoogleMapsPlugin",
-    PortalType.CONSUMIDOR_GOV: "src.plugins.consumidor_gov.plugin.ConsumidorGovPlugin",
+    PortalType.GOOGLE_SHOPPING: "src.plugins.google_shopping.plugin.GoogleShoppingPlugin",
 }
 
 
