@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Manual validation script — runs a real Reclame Aqui search.
+"""Manual validation script — fetches Reclame Aqui complaints via cloudscraper.
 
 Usage::
 
-    python scripts/test_ra_real.py --visible
-    python scripts/test_ra_real.py --visible --company "Magazine Luiza"
+    python scripts/test_ra_real.py
+    python scripts/test_ra_real.py --company "Magazine Luiza"
+    python scripts/test_ra_real.py --company nubank --pages 3
 """
 
 from __future__ import annotations
@@ -26,23 +27,22 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Test Reclame Aqui scraper")
     parser.add_argument("--company", default="magazine-luiza")
     parser.add_argument("--pages", type=int, default=2)
-    parser.add_argument("--visible", action="store_true")
     args = parser.parse_args()
 
-    from src.plugins.reclame_aqui.scraper import ReclameAquiScraper, _clear_config_cache
+    from src.plugins.reclame_aqui.scraper import ReclameAquiScraper, _clear_config_cache, slugify
 
     _clear_config_cache()
 
-    scraper = ReclameAquiScraper(headless=not args.visible)
+    scraper = ReclameAquiScraper()
+    slug = slugify(args.company)
 
-    print(f"\n🔍 Scraping Reclame Aqui for: {args.company!r}")
-    print(f"   Headless: {not args.visible}  |  Max pages: {args.pages}")
+    print(f"\n🔍 Fetching Reclame Aqui for: {slug!r} (max {args.pages} pages)")
     print()
 
-    results = await scraper.search(args.company, max_pages=args.pages)
+    results = await scraper.search(slug, max_pages=args.pages)
 
     if not results:
-        print("❌ No complaints found.")
+        print("❌ No complaints found (or CloudFlare blocked).")
         sys.exit(1)
 
     print(f"✅ {len(results)} complaints found\n")
@@ -50,13 +50,11 @@ async def main() -> None:
         title = c.get("title", "?")[:70]
         date = c.get("date", "N/A")
         status = c.get("status", "N/A")
-        url = c.get("complaint_url", "")[:80]
+        rating = c.get("rating", "N/A")
         print(f"  {i}. {title}")
-        print(f"     📅 {date}  |  Status: {status}")
+        print(f"     📅 {date}  |  Status: {status}  |  ⭐ {rating}")
         if c.get("text"):
-            print(f"     📝 {c['text'][:100]}...")
-        if url:
-            print(f"     🔗 {url}")
+            print(f"     📝 {c['text'][:100]}")
         print()
 
 
