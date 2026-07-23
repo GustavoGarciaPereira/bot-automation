@@ -1,8 +1,11 @@
 {
     "plugin_name": "reclame_aqui",
     "base_url": "https://www.reclameaqui.com.br",
+    "headless": true,
     "timeout_seconds": 30,
     "max_pages_default": 3,
-    "request_delay_min": 2,
-    "request_delay_max": 4
+    "random_delay_min": 3,
+    "random_delay_max": 7,
+    "max_scrolls": 5,
+    "scroll_pause": 2
 }

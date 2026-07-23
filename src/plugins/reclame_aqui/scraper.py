@@ -1,8 +1,8 @@
-"""Reclame Aqui scraper — uses cloudscraper to bypass CloudFlare protection.
+"""Reclame Aqui scraper — uses Selenium (JS-rendered SPA).
 
-Reclame Aqui uses CloudFlare challenge pages, making Selenium-based
-scraping unreliable (browser crashes).  This scraper uses ``cloudscraper``
-to bypass CF and parses the server-rendered HTML with BeautifulSoup.
+Reclame Aqui is a JavaScript-rendered SPA behind CloudFlare.
+HTTP/requests cannot extract complaint data — only Selenium
+can execute the JS and render the actual content.
 """
 
 from __future__ import annotations
@@ -16,9 +16,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from bs4 import BeautifulSoup
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 from src.interfaces.scraper import BaseScraper
+from src.plugins.base_selenium_plugin import selenium_driver
 from src.plugins.reclame_aqui.models import Complaint, CompanyReport
 from src.utils.logger import get_logger
 
@@ -31,10 +35,13 @@ logger = get_logger(__name__)
 _DEFAULT_CONFIG = {
     "plugin_name": "reclame_aqui",
     "base_url": "https://www.reclameaqui.com.br",
+    "headless": True,
     "timeout_seconds": 30,
     "max_pages_default": 3,
-    "request_delay_min": 2,
-    "request_delay_max": 4,
+    "random_delay_min": 3,
+    "random_delay_max": 7,
+    "max_scrolls": 5,
+    "scroll_pause": 2,
 }
 
 _CONFIG_CACHE: dict[str, Any] | None = None
@@ -67,7 +74,6 @@ def _clear_config_cache() -> None:
 
 
 def slugify(name: str) -> str:
-    """Convert company name to URL slug."""
     name = unicodedata.normalize("NFKD", name)
     name = name.encode("ascii", "ignore").decode("ascii")
     name = name.lower().strip()
@@ -78,51 +84,68 @@ def slugify(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# CSS selectors for page parsing
+# CSS selectors with fallbacks
 # ---------------------------------------------------------------------------
 
-_CARD_SELECTORS = [
-    "div.complaint-card",
-    "div[class*='complaint-card']",
-    "div[class*='card-reclamacoes']",
+_MODAL_SELECTORS = [
+    "button:has-text('Aceitar')",
+    "button:has-text('Entendi')",
+    "button[class*='cookie']",
+    "button[class*='accept']",
+    "button[aria-label='Fechar']",
+    "div[class*='modal'] button",
+    "#onetrust-accept-btn-handler",
+]
+
+_CONTAINER_SELECTORS = [
+    "div[class*='complaint']",
     "div[class*='reclamacao']",
+    "a[href*='/reclamacao/']",
+    "div[class*='card']",
+    "div[class*='list']",
+]
+
+_CARD_SELECTORS = [
+    "div[class*='complaint-card']",
+    "div[data-testid*='complaint']",
+    "article[class*='complaint']",
+    "div[class*='card-reclamacao']",
+    "div[class*='reclamacao']",
+    "div[class*='card']",
 ]
 
 _TITLE_SELECTORS = [
-    "h2.complaint-card__title a",
-    "h2[class*='title'] a",
     "a[href*='/reclamacao/']",
-    "h2.complaint-card__title",
-    "h2 a",
+    "h2[class*='title'] a",
     "a[class*='title']",
+    "h2 a",
+    "h2",
 ]
 
 _DATE_SELECTORS = [
-    "span.complaint-card__date",
     "time[datetime]",
     "span[class*='date']",
     "span[class*='data']",
 ]
 
 _STATUS_SELECTORS = [
-    "span.complaint-card__status",
     "span[class*='status']",
     "span[class*='badge']",
     "div[class*='status']",
 ]
 
 _TEXT_SELECTORS = [
-    "p.complaint-card__text",
-    "div[class*='description']",
     "p[class*='text']",
+    "div[class*='description']",
+    "p",
 ]
 
-_PAGINATION_SELECTORS = [
+_NEXT_PAGE = [
     "a[class*='next']",
-    "a[aria-label*='próxima']",
-    "a[aria-label*='next']",
-    "a[rel='next']",
-    "a[class*='pagination-next']",
+    "button[class*='next']",
+    "a[aria-label*='Pr\u00f3xima']",
+    "button:has-text('Carregar mais')",
+    "a[class*='pagination']",
 ]
 
 
@@ -132,38 +155,16 @@ _PAGINATION_SELECTORS = [
 
 
 class ReclameAquiScraper(BaseScraper):
-    """Scraper for Reclame Aqui complaint listings using cloudscraper."""
+    """Scraper for Reclame Aqui using Selenium (JS-rendered SPA)."""
 
     def __init__(
         self,
-        headless: bool = True,  # kept for interface compatibility, unused
+        headless: bool = True,
         remote_url: str | None = None,
     ) -> None:
         self._cfg = _load_config()
-        self._session = self._build_session()
-        self._last_request: float = 0
-
-    def _build_session(self) -> Any:
-        """Create a cloudscraper session that bypasses CloudFlare."""
-        import cloudscraper
-        sess = cloudscraper.create_scraper(
-            browser={
-                "browser": "chrome",
-                "platform": "windows",
-                "desktop": True,
-                "mobile": False,
-            },
-        )
-        sess.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-        })
-        return sess
+        self._headless = headless
+        self._remote_url = remote_url
 
     # ------------------------------------------------------------------
     # Public API
@@ -172,236 +173,259 @@ class ReclameAquiScraper(BaseScraper):
     async def search(
         self, company_slug: str, max_pages: int | None = None, **kwargs: Any
     ) -> list[dict[str, Any]]:
-        """Search complaints for a company by slug."""
-        import asyncio
+        """Search complaints for a company via Selenium."""
 
         if " " in company_slug or not re.match(r"^[a-z0-9-]+$", company_slug):
             company_slug = slugify(company_slug)
 
         max_pages = max_pages or self._cfg.get("max_pages_default", 3)
+        company_url = f"{self._cfg['base_url']}/empresa/{company_slug}/reclamacoes"
+
+        logger.info("RA Selenium: opening %s (max %d pages)", company_url, max_pages)
 
         all_complaints: list[Complaint] = []
-        no_title_count = 0
-        dup_count = 0
+        driver = None
+        no_title = 0
+        dup = 0
 
-        for page in range(1, max_pages + 1):
-            logger.info("RA: fetching page %d for %s", page, company_slug)
-            if page == 1:
-                url = f"{self._cfg['base_url']}/empresa/{company_slug}/reclamacoes"
-            else:
-                url = f"{self._cfg['base_url']}/empresa/{company_slug}/reclamacoes?pagina={page}"
+        try:
+            async with selenium_driver(
+                headless=self._headless,
+                remote_url=self._remote_url,
+            ) as driver:
+                driver.get(company_url)
+                self._random_delay()
 
-            html = await asyncio.get_running_loop().run_in_executor(
-                None, self._fetch_page, url
-            )
-            if not html:
-                logger.warning("RA: page %d returned empty — stopping", page)
-                break
+                # Close modals
+                self._close_modals(driver)
 
-            soup = BeautifulSoup(html, "html.parser")
-            cards = self._find_cards(soup)
-            logger.info("RA page %d: %d cards found", page, len(cards))
+                # Wait for JS to render content
+                if not self._wait_for_content(driver):
+                    self._save_debug(driver, company_slug)
+                    logger.warning("RA: JS did not render complaints — possible block")
+                    return []
 
-            if not cards:
-                logger.warning(
-                    "RA: no complaint cards found on page %d. "
-                    "Reclame Aqui is a JavaScript-rendered SPA. "
-                    "Data may not be available via HTTP scraping.",
-                    page,
+                # Scroll to trigger lazy loading
+                self._scroll_page(driver)
+
+                for page in range(1, max_pages + 1):
+                    logger.info("RA: scraping page %d", page)
+
+                    cards = self._find_cards(driver)
+                    logger.info("RA page %d: %d cards", page, len(cards))
+
+                    for card in cards:
+                        c = self._parse_card(card, company_slug)
+                        if c is None:
+                            no_title += 1
+                            continue
+                        key = c.title.lower().strip()
+                        if any(x.title.lower().strip() == key for x in all_complaints):
+                            dup += 1
+                            continue
+                        all_complaints.append(c)
+
+                    if page < max_pages:
+                        if not self._go_next_page(driver):
+                            logger.info("RA: no next page after %d", page)
+                            break
+                        self._random_delay()
+
+                logger.info(
+                    "RA: %d complaints | No title: %d | Dup: %d | %s",
+                    len(all_complaints), no_title, dup, company_slug,
                 )
+                return [c.model_dump() for c in all_complaints]
 
-            for card in cards:
-                c = self._parse_card(card, company_slug)
-                if c is None:
-                    no_title_count += 1
-                    continue
-                key = c.title.lower().strip()
-                if any(x.title.lower().strip() == key for x in all_complaints):
-                    dup_count += 1
-                    continue
-                all_complaints.append(c)
-
-            # Check if next page exists
-            if not self._has_next_page(soup):
-                logger.info("RA: no next page after %d", page)
-                break
-
-            # Rate limiting
-            await asyncio.get_running_loop().run_in_executor(None, self._rate_limit)
-
-        logger.info(
-            "RA: %d complaints | No title: %d | Dup: %d | %s",
-            len(all_complaints), no_title_count, dup_count, company_slug,
-        )
-        return [c.model_dump() for c in all_complaints]
+        except Exception as exc:
+            logger.error("RA scraping failed: %s", exc)
+            if driver:
+                self._save_debug(driver, company_slug)
+            return []
 
     async def extract(self, complaint_url: str, **kwargs: Any) -> dict[str, Any]:
         """Extract full complaint details from a single page."""
-        import asyncio
-
         logger.info("RA extract: %s", complaint_url)
 
-        html = await asyncio.get_running_loop().run_in_executor(
-            None, self._fetch_page, complaint_url
-        )
-        if not html:
+        driver = None
+        try:
+            async with selenium_driver(
+                headless=self._headless,
+                remote_url=self._remote_url,
+            ) as driver:
+                driver.get(complaint_url)
+                self._random_delay()
+                self._close_modals(driver)
+
+                title = (
+                    self._text(driver, "h1[class*='title'], h1.complaint-title")
+                    or self._text(driver, "h1")
+                )
+                text = self._multi_text(driver, [
+                    "div.complaint-text",
+                    "div[class*='complaint-body']",
+                    "div[class*='description']",
+                    "div[class*='content']",
+                    "div[class*='text']",
+                ])
+                response = self._multi_text(driver, [
+                    "div.company-response",
+                    "div[class*='response']",
+                    "div[class*='resposta']",
+                    "div[class*='answer']",
+                ])
+                rating = self._parse_rating(driver)
+                category = self._multi_text(driver, [
+                    "span[class*='category']",
+                    "a[class*='category']",
+                ])
+                date = self._date_from_driver(driver)
+                status = self._multi_text(driver, _STATUS_SELECTORS)
+
+                return Complaint(
+                    title=title or "Unknown",
+                    text=text or None,
+                    date=date or None,
+                    status=status or None,
+                    company_response=response or None,
+                    rating=rating,
+                    category=category or None,
+                    complaint_url=complaint_url,
+                ).model_dump()
+
+        except Exception as exc:
+            logger.error("RA extract failed: %s", exc)
+            if driver:
+                self._save_debug(driver, complaint_url)
             return {}
 
-        soup = BeautifulSoup(html, "html.parser")
-
-        title = (
-            self._text(soup, "h1[class*='title'], h1.complaint-title")
-            or self._text(soup, "h1")
-        )
-        text = self._multi_text(soup, [
-            "div.complaint-text",
-            "div[class*='complaint-body']",
-            "div[class*='description']",
-            "div[class*='content']",
-            "div[class*='text']",
-        ])
-        response = self._multi_text(soup, [
-            "div.company-response",
-            "div[class*='response']",
-            "div[class*='resposta']",
-            "div[class*='answer']",
-        ])
-        rating = self._parse_rating(soup)
-        category = self._multi_text(soup, [
-            "span[class*='category']",
-            "a[class*='category']",
-        ])
-        date = self._date_from_soup(soup)
-        status = self._multi_text(soup, [
-            "span[class*='status']",
-            "div[class*='status']",
-        ])
-
-        return Complaint(
-            title=title or "Unknown",
-            text=text,
-            date=date,
-            status=status or None,
-            company_response=response or None,
-            rating=rating,
-            category=category or None,
-            complaint_url=complaint_url,
-        ).model_dump()
-
     # ------------------------------------------------------------------
-    # Internal — HTTP
+    # Internal — navigation
     # ------------------------------------------------------------------
 
-    def _fetch_page(self, url: str) -> str | None:
-        """Fetch page HTML via cloudscraper."""
-        try:
-            resp = self._session.get(
-                url,
-                timeout=self._cfg.get("timeout_seconds", 30),
-            )
-            if resp.status_code != 200:
-                logger.warning(
-                    "RA HTTP %d for %s. "
-                    "Reclame Aqui is a JS-rendered SPA behind CloudFlare. "
-                    "Try accessing the URL in a browser to verify it exists.",
-                    resp.status_code, url,
+    def _close_modals(self, driver: Any) -> None:
+        """Close cookie/modals popups."""
+        for sel in [
+            "button[class*='cookie']",
+            "#onetrust-accept-btn-handler",
+            "button[class*='accept']",
+            "button[aria-label='Fechar']",
+            "div[class*='modal'] button",
+        ]:
+            try:
+                btn = driver.find_element(By.CSS_SELECTOR, sel)
+                btn.click()
+                logger.debug("RA modal closed: %s", sel)
+                time.sleep(1)
+            except Exception:
+                continue
+
+    def _wait_for_content(self, driver: Any) -> bool:
+        timeout = self._cfg.get("timeout_seconds", 30)
+        for selector in _CONTAINER_SELECTORS:
+            try:
+                WebDriverWait(driver, timeout).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                 )
-                return None
-            return resp.text
-        except Exception as exc:
-            logger.error("RA fetch failed for %s: %s", url, exc)
-            return None
+                logger.debug("RA content found: %s", selector)
+                return True
+            except TimeoutException:
+                continue
+        return False
 
-    def _rate_limit(self) -> None:
-        """Ensure delay between requests."""
-        elapsed = time.time() - self._last_request
-        min_interval = random.uniform(
-            self._cfg.get("request_delay_min", 2),
-            self._cfg.get("request_delay_max", 4),
-        )
-        if elapsed < min_interval:
-            time.sleep(min_interval - elapsed)
-        self._last_request = time.time()
+    def _find_cards(self, driver: Any) -> list[Any]:
+        for selector in _CARD_SELECTORS:
+            items = driver.find_elements(By.CSS_SELECTOR, selector)
+            if items:
+                return items
+        return []
+
+    def _scroll_page(self, driver: Any) -> None:
+        """Scroll down to trigger lazy loading."""
+        max_scrolls = self._cfg.get("max_scrolls", 5)
+        pause = self._cfg.get("scroll_pause", 2)
+        for i in range(max_scrolls):
+            try:
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(pause)
+            except Exception:
+                break
+
+    def _go_next_page(self, driver: Any) -> bool:
+        for selector in _NEXT_PAGE:
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, selector)
+                href = el.get_attribute("href")
+                if href:
+                    driver.get(href)
+                    self._random_delay()
+                    self._close_modals(driver)
+                    return True
+                el.click()
+                self._random_delay()
+                self._close_modals(driver)
+                return True
+            except Exception:
+                continue
+        return False
 
     # ------------------------------------------------------------------
     # Internal — parsing
     # ------------------------------------------------------------------
 
-    def _find_cards(self, soup: BeautifulSoup) -> list[Any]:
-        for selector in _CARD_SELECTORS:
-            cards = soup.select(selector)
-            if cards:
-                return cards
-        return []
-
     def _parse_card(self, card: Any, company_slug: str) -> Complaint | None:
         title = self._multi_text(card, _TITLE_SELECTORS)
         if not title:
             return None
-
         text = self._multi_text(card, _TEXT_SELECTORS)
-        date = self._date_from_soup(card)
+        date = self._date_from_driver(card)
         status = self._multi_text(card, _STATUS_SELECTORS)
         url = self._card_url(card)
         rating = self._parse_rating(card)
-
         return Complaint(
-            title=title,
-            text=text or None,
-            date=date or None,
-            status=status or None,
-            rating=rating,
-            complaint_url=url,
+            title=title, text=text or None, date=date or None,
+            status=status or None, rating=rating, complaint_url=url,
         )
 
     def _card_url(self, card: Any) -> str:
-        for selector in [
-            "a[href*='/reclamacao/']",
-            "h2 a",
-            "a[class*='title']",
-            "a",
-        ]:
-            tag = card.select_one(selector)
-            if tag and tag.get("href"):
-                href = tag["href"]
-                if href.startswith("/"):
-                    href = f"{self._cfg['base_url']}{href}"
-                return href
+        for selector in ["a[href*='/reclamacao/']", "a[class*='title']", "a"]:
+            try:
+                el = card.find_element(By.CSS_SELECTOR, selector)
+                href = el.get_attribute("href") or ""
+                if href:
+                    if href.startswith("/"):
+                        href = f"{self._cfg['base_url']}{href}"
+                    return href
+            except Exception:
+                continue
         return ""
-
-    def _has_next_page(self, soup: BeautifulSoup) -> bool:
-        for selector in _PAGINATION_SELECTORS:
-            if soup.select_one(selector):
-                return True
-        return False
 
     def _parse_rating(self, element: Any) -> float | None:
         for sel in [
-            "span[class*='rating']",
-            "div[class*='score']",
-            "span[class*='nota']",
-            "span[class*='grade']",
-            "div[class*='nota']",
+            "span[class*='rating']", "div[class*='score']",
+            "span[class*='nota']", "span[class*='grade']",
         ]:
-            tag = element.select_one(sel)
-            if tag:
-                text = tag.text.strip().replace(",", ".")
+            try:
+                el = element.find_element(By.CSS_SELECTOR, sel)
+                text = el.text.strip().replace(",", ".")
                 nums = re.findall(r"[\d.]+", text)
                 for n in nums:
-                    try:
-                        val = float(n)
-                        if 0 <= val <= 10:
-                            return val
-                    except ValueError:
-                        continue
+                    val = float(n)
+                    if 0 <= val <= 10:
+                        return val
+            except Exception:
+                continue
         return None
 
-    def _date_from_soup(self, element: Any) -> str | None:
-        time_tag = element.select_one("time[datetime]")
-        if time_tag and time_tag.get("datetime"):
-            return str(time_tag["datetime"])[:10]
-        text = self._multi_text(element, _DATE_SELECTORS)
-        return text or None
+    def _date_from_driver(self, element: Any) -> str | None:
+        try:
+            el = element.find_element(By.CSS_SELECTOR, "time[datetime]")
+            dt = el.get_attribute("datetime")
+            if dt:
+                return dt[:10]
+        except Exception:
+            pass
+        return self._multi_text(element, _DATE_SELECTORS) or None
 
     # ------------------------------------------------------------------
     # Internal — helpers
@@ -409,15 +433,39 @@ class ReclameAquiScraper(BaseScraper):
 
     def _multi_text(self, element: Any, selectors: list[str]) -> str:
         for sel in selectors:
-            tag = element.select_one(sel)
-            if tag:
-                text = tag.text.strip()
+            try:
+                found = element.find_element(By.CSS_SELECTOR, sel)
+                text = found.text.strip()
                 if text:
                     return text
+            except Exception:
+                continue
         return ""
 
     def _text(self, element: Any, selector: str) -> str:
-        tag = element.select_one(selector)
-        if tag:
-            return tag.text.strip()
-        return ""
+        try:
+            found = element.find_element(By.CSS_SELECTOR, selector)
+            return found.text.strip()
+        except Exception:
+            return ""
+
+    def _random_delay(self) -> None:
+        time.sleep(random.uniform(
+            self._cfg.get("random_delay_min", 3),
+            self._cfg.get("random_delay_max", 7),
+        ))
+
+    def _save_debug(self, driver: Any, label: str) -> None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_dir = Path("data/logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            driver.save_screenshot(str(log_dir / f"ra_debug_{ts}.png"))
+        except Exception:
+            pass
+        try:
+            (log_dir / f"ra_debug_{ts}.html").write_text(
+                driver.page_source, encoding="utf-8"
+            )
+        except Exception:
+            pass

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Manual validation script — fetches Reclame Aqui complaints via cloudscraper.
+"""Manual validation script — runs real Reclame Aqui scraping via Selenium.
 
 Usage::
 
-    python scripts/test_ra_real.py
-    python scripts/test_ra_real.py --company "Magazine Luiza"
-    python scripts/test_ra_real.py --company nubank --pages 3
+    python scripts/test_ra_real.py --visible
+    python scripts/test_ra_real.py --company "Magazine Luiza" --visible
+    python scripts/test_ra_real.py --company nubank --visible --debug
 """
 
 from __future__ import annotations
@@ -27,34 +27,32 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Test Reclame Aqui scraper")
     parser.add_argument("--company", default="magazine-luiza")
     parser.add_argument("--pages", type=int, default=2)
+    parser.add_argument("--visible", action="store_true")
+    parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
     from src.plugins.reclame_aqui.scraper import ReclameAquiScraper, _clear_config_cache, slugify
 
     _clear_config_cache()
-
-    scraper = ReclameAquiScraper()
     slug = slugify(args.company)
 
-    print(f"\n🔍 Fetching Reclame Aqui for: {slug!r} (max {args.pages} pages)")
+    scraper = ReclameAquiScraper(headless=not args.visible)
+
+    print(f"\n🔍 Scraping Reclame Aqui for: {slug!r} (max {args.pages} pages)")
+    print(f"   Headless: {not args.visible}  |  Debug: {args.debug}")
     print()
 
     results = await scraper.search(slug, max_pages=args.pages)
 
     if not results:
-        print("❌ No complaints found (or CloudFlare blocked).")
+        print("❌ No complaints found.")
+        print("   If RA blocked Selenium, try --visible to see what loads.")
         sys.exit(1)
 
     print(f"✅ {len(results)} complaints found\n")
     for i, c in enumerate(results, 1):
-        title = c.get("title", "?")[:70]
-        date = c.get("date", "N/A")
-        status = c.get("status", "N/A")
-        rating = c.get("rating", "N/A")
-        print(f"  {i}. {title}")
-        print(f"     📅 {date}  |  Status: {status}  |  ⭐ {rating}")
-        if c.get("text"):
-            print(f"     📝 {c['text'][:100]}")
+        print(f"  {i}. {c.get('title', '?')[:70]}")
+        print(f"     📅 {c.get('date', 'N/A')}  |  {c.get('status', 'N/A')}")
         print()
 
 
