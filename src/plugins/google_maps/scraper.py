@@ -455,17 +455,42 @@ class GoogleMapsScraper(BaseScraper):
         return None
 
     def _address(self, item: Any) -> str | None:
-        text = self._first_text(item, _ADDRESS_SELECTORS)
-        if not text:
-            return None
-        # Reject numeric-only values (those are ratings, not addresses)
         import re
-        if re.match(r'^\d+[.,]\d+$', text.strip()):
-            return None
-        # Reject short text (less than 5 chars is unlikely an address)
-        if len(text.strip()) < 5:
-            return None
-        return text.strip() or None
+
+        # Try specific selectors first
+        text = self._first_text(item, _ADDRESS_SELECTORS)
+        if text:
+            # Reject numeric-only values (those are ratings, not addresses)
+            if re.match(r'^\d+[.,]\d+$', text.strip()):
+                return None
+            if len(text.strip()) < 5:
+                return None
+            return text.strip()
+
+        # Aggressive fallback: scan ALL buttons with data-item-id
+        try:
+            all_buttons = item.find_elements(By.CSS_SELECTOR, "button")
+            for btn in all_buttons:
+                data_id = btn.get_attribute("data-item-id") or ""
+                if "address" in data_id:
+                    addr_text = (btn.text or "").strip()
+                    if addr_text and not re.match(r'^\d+[.,]\d+$', addr_text) and len(addr_text) >= 5:
+                        return addr_text
+        except Exception:
+            pass
+
+        # Last resort: scan all text lines for address patterns
+        try:
+            all_text = item.text.strip()
+            for line in all_text.split("\n"):
+                line = line.strip()
+                if any(p in line for p in ["Rua ", "Av. ", "Alameda ", "Praça "]):
+                    if not re.match(r'^\d+[.,]\d+$', line) and len(line) >= 5:
+                        return line
+        except Exception:
+            pass
+
+        return None
 
     def _phone(self, item: Any) -> str | None:
         # Try specific selectors first
