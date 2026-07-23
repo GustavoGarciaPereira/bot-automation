@@ -83,6 +83,18 @@ def _mock_item(
         raise Exception(f"Mock not implemented for: {selector}")
 
     item.find_element.side_effect = _find
+
+    # Fallback: find_elements for phone buttons iteration
+    def _find_elems(by: str, selector: str) -> list[MagicMock]:
+        if "button[data-item-id]" in selector:
+            if phone:
+                btn = MagicMock()
+                btn.get_attribute.return_value = f"phone:tel:{phone}"
+                return [btn]
+            return []
+        return []
+
+    item.find_elements.side_effect = _find_elems
     return item
 
 
@@ -142,7 +154,7 @@ class TestSearch:
     async def test_min_rating_filter(
         self, mock_wait: MagicMock, mock_selenium: MagicMock, scraper: GoogleMapsScraper
     ) -> None:
-        """5 businesses with ratings 3.0-5.0, min_rating=4.0 → 3 results."""
+        """5 businesses with ratings 3.0-5.0, min_rating=4.0 → 2 results (3.0 and 3.5 filtered)."""
         mock_driver = MagicMock()
         mock_cm = MagicMock()
         mock_cm.__aenter__.return_value = mock_driver
@@ -160,6 +172,7 @@ class TestSearch:
 
         results = await scraper.search("test", max_results=10, min_rating=4.0)
 
+        # Only 4.0, 4.5, 5.0 remain (3 items)
         assert len(results) == 3
         for r in results:
             assert r["rating"] is None or r["rating"] >= 4.0
@@ -334,6 +347,78 @@ class TestBusinessModel:
         assert ls.query == "test"
         assert ls.total == 0
         assert len(ls.businesses) == 1
+
+
+# ---------------------------------------------------------------------------
+# Plugin integration (dry-run)
+# ---------------------------------------------------------------------------
+
+
+class TestAddressNotRating:
+    def test_address_not_rating(self, scraper: GoogleMapsScraper) -> None:
+        """Address '4,9' (rating) → None; address 'Rua X, 123' → kept."""
+        # Item where W4Efsd would return rating "4,9"
+        item_rating = _mock_item(address="4,9")
+        biz = scraper._parse_item(item_rating, "test")
+        assert biz is not None
+        assert biz.address is None, "Numeric address should be rejected"
+
+        # Item with real address
+        item_real = _mock_item(address="Rua X, 123")
+        biz2 = scraper._parse_item(item_real, "test")
+        assert biz2 is not None
+        assert biz2.address == "Rua X, 123"
+
+
+class TestNameOnlyIsValid:
+    @patch("src.plugins.google_maps.scraper.selenium_driver")
+    @patch("src.plugins.google_maps.scraper.WebDriverWait")
+    async def test_name_only_is_valid(
+        self, mock_wait: MagicMock, mock_selenium: MagicMock, scraper: GoogleMapsScraper
+    ) -> None:
+        """Item with only a name (no rating, address) should be included."""
+        mock_driver = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__.return_value = mock_driver
+        mock_selenium.return_value = mock_cm
+        mock_wait_instance = MagicMock()
+        mock_wait.return_value = mock_wait_instance
+
+        mock_items = [
+            _mock_item(name="Só Nome", address="", phone=None, website=None, rating=""),
+        ]
+        mock_driver.find_elements.return_value = mock_items
+
+        results = await scraper.search("test", max_results=10)
+        assert len(results) == 1
+        assert results[0]["name"] == "Só Nome"
+
+
+class TestDedup:
+    @patch("src.plugins.google_maps.scraper.selenium_driver")
+    @patch("src.plugins.google_maps.scraper.WebDriverWait")
+    async def test_dedup(
+        self, mock_wait: MagicMock, mock_selenium: MagicMock, scraper: GoogleMapsScraper
+    ) -> None:
+        """2 items with same name+rating → 1 result."""
+        mock_driver = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__.return_value = mock_driver
+        mock_selenium.return_value = mock_cm
+        mock_wait_instance = MagicMock()
+        mock_wait.return_value = mock_wait_instance
+
+        mock_items = [
+            _mock_item(name="Dentista A", rating="4.5"),
+            _mock_item(name="Dentista A", rating="4.5"),  # dup
+            _mock_item(name="Dentista B", rating="4.0"),
+        ]
+        mock_driver.find_elements.return_value = mock_items
+
+        results = await scraper.search("test", max_results=10)
+        assert len(results) == 2
+        names = [r["name"] for r in results]
+        assert names == ["Dentista A", "Dentista B"]
 
 
 # ---------------------------------------------------------------------------

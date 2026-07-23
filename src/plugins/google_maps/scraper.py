@@ -113,18 +113,23 @@ _REVIEWS_SELECTORS = [
 
 _ADDRESS_SELECTORS = [
     "button[data-item-id='address'] div.W4Efsd",
-    "button[data-item-id='address']",
+    "button[data-item-id='address'] span",
+    "div[role='article'] button[data-item-id*='address']",
     "div[data-item-id='address']",
-    "div.W4Efsd",
 ]
 
 _PHONE_SELECTORS = [
+    "button[data-item-id^='phone:'] div.W4Efsd",
+    "button[data-item-id*='phone'] span",
+    "div[role='article'] button[data-item-id^='phone:']",
     "button[data-item-id*='phone:']",
     "button[data-item-id*='phone']",
 ]
 
 _WEBSITE_SELECTORS = [
     "a[data-item-id='authority']",
+    "a[aria-label*='site']",
+    "a[href*='http']:not([href*='google.com']):not([href*='maps']) a",
     "a[class*='website']",
 ]
 
@@ -199,23 +204,33 @@ class GoogleMapsScraper(BaseScraper):
 
                 businesses: list[Business] = []
                 limit = min(max_results, len(items))
+                seen: set[tuple[str, float | None]] = set()
+                discarded_no_name = 0
+                discarded_dup = 0
 
                 for item in items[:limit]:
                     try:
                         biz = self._parse_item(item, query)
                         if biz is None:
+                            discarded_no_name += 1
                             continue
-                        if min_rating > 0 and (biz.rating is None or biz.rating < min_rating):
+                        if min_rating > 0 and biz.rating is not None and biz.rating < min_rating:
                             continue
+                        # Dedup by (name, rating)
+                        key = (biz.name.lower().strip(), biz.rating)
+                        if key in seen:
+                            discarded_dup += 1
+                            continue
+                        seen.add(key)
                         businesses.append(biz)
                     except Exception as exc:
                         logger.debug("Failed to parse GMaps item: %s", exc)
                         continue
 
                 logger.info(
-                    "GMaps scraping: %d businesses parsed for query=%r",
-                    len(businesses),
-                    query,
+                    "GMaps scraping: %d businesses parsed for query=%r "
+                    "(discarded: %d no name, %d dup)",
+                    len(businesses), query, discarded_no_name, discarded_dup,
                 )
                 return [b.model_dump() for b in businesses]
 
@@ -424,22 +439,43 @@ class GoogleMapsScraper(BaseScraper):
 
     def _address(self, item: Any) -> str | None:
         text = self._first_text(item, _ADDRESS_SELECTORS)
-        return text or None
+        if not text:
+            return None
+        # Reject numeric-only values (those are ratings, not addresses)
+        import re
+        if re.match(r'^\d+[.,]\d+$', text.strip()):
+            return None
+        # Reject short text (less than 5 chars is unlikely an address)
+        if len(text.strip()) < 5:
+            return None
+        return text.strip() or None
 
     def _phone(self, item: Any) -> str | None:
+        # Try specific selectors first
         for sel in _PHONE_SELECTORS:
             try:
                 el = item.find_element(By.CSS_SELECTOR, sel)
                 data_id = el.get_attribute("data-item-id") or ""
-                # data-item-id="phone:tel:019-3234-5678"
                 if ":" in data_id:
                     return data_id.split(":", 2)[-1]
-                # Or the element text
                 text = (el.text or "").strip()
                 if text:
                     return text
             except Exception:
                 continue
+
+        # Fallback: iterate all buttons with data-item-id
+        try:
+            buttons = item.find_elements(
+                By.CSS_SELECTOR, "button[data-item-id]"
+            )
+            for btn in buttons:
+                data_id = btn.get_attribute("data-item-id") or ""
+                if data_id.startswith("phone:"):
+                    return data_id.replace("phone:tel:", "").replace("phone:", "")
+        except Exception:
+            pass
+
         return None
 
     def _website(self, item: Any) -> str | None:
