@@ -446,20 +446,47 @@ class GoogleMapsScraper(BaseScraper):
         return None
 
     def _website(self, item: Any) -> str | None:
-        """REAL selector: a.lcr4fd.S9kvJb[data-value='Website'] href."""
+        """Extract website URL from the card."""
+        # Strategy 1: specific selectors
+        for sel in [
+            "a.lcr4fd.S9kvJb[data-value='Website']",
+            "a.lcr4fd[data-value='Website']",
+            "a[aria-label*='Acessar o site']",
+            "a[aria-label*='site']",
+            "a[data-item-id='authority']",
+            "a[data-item-id='authority'][href]",
+            "a[target='_blank'][href]",
+        ]:
+            try:
+                el = item.find_element(By.CSS_SELECTOR, sel)
+                href = el.get_attribute("href") or ""
+                if href and self._is_valid_website(href):
+                    return href
+            except Exception:
+                continue
+
+        # Strategy 2: regex on outerHTML (catches links not in visible elements)
         try:
-            el = item.find_element(
-                By.CSS_SELECTOR,
-                "a.lcr4fd.S9kvJb[data-value='Website'], "
-                "a.lcr4fd[data-value='Website'], "
-                "a[aria-label*='Acessar o site']",
-            )
-            href = el.get_attribute("href") or ""
-            if href and "google.com/aclk" not in href and "googleadservices" not in href:
-                return href
+            import re
+            html = item.get_attribute("outerHTML") or ""
+            urls = re.findall(r'href="(https?://(?:[^"\\]+))"', html)
+            for url in urls:
+                if self._is_valid_website(url):
+                    return url
         except Exception:
             pass
+
         return None
+
+    def _is_valid_website(self, url: str) -> bool:
+        """Check if a URL is a valid external website (not Google tracking)."""
+        if not url.startswith("http"):
+            return False
+        skip_domains = [
+            "google.com/aclk", "googleadservices", "maps.google",
+            "accounts.google", "support.google", "policies.google",
+        ]
+        return not any(d in url for d in skip_domains)
 
     def _hours(self, item: Any) -> str | None:
         """REAL selector: span[style*='color: rgba(43,127,63']"""

@@ -149,7 +149,7 @@ class CrossReferenceService:
     ) -> str:
         parts = []
         if not biz.get("website"):
-            parts.append("Sem site - oportunidade de marketing digital")
+            parts.append("Website nao detectado no Maps (pode existir - verificar)")
         if not ml_presence and not olx_presence:
             parts.append("Sem presenca em marketplaces")
         if biz.get("rating"):
