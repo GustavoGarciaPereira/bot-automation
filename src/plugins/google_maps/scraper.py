@@ -1,13 +1,27 @@
 """Google Maps scraper — uses Selenium to scrape business search results.
 
-Navigates to ``google.com/maps/search/{query}`` and parses the sidebar
-result list with lazy-load scroll support.
+# ============================================================
+# REAL SELECTORS (from gmaps_items_20260722_214916/, Chrome 150)
+# ============================================================
+# Container:        div[role='article'].Nv2PK
+# Name (aria):      a.hfpxzc[aria-label]
+# Name (text):      div.qBF1Pd.fontHeadlineSmall
+# Name (span):      span.xxVWCe
+# Rating:           span.MW4etd (text like "4,9")
+# Category:         div.W4Efsd > div.W4Efsd > span > span (first text)
+# Address:          div.W4Efsd > div.W4Efsd > span > span (third text, after ·)
+# Phone:            span.UsdlK (text like "(19) 3325-0025")
+# Hours:            span[style*='color: rgba(43,127,63']
+# Website button:   a.lcr4fd.S9kvJb[data-value="Website"] href
+# Website label:    a[aria-label*='Acessar o site']
+# ============================================================
 """
 
 from __future__ import annotations
 
 import json
 import random
+import re
 import time
 import urllib.parse
 from datetime import datetime
@@ -68,89 +82,6 @@ def _clear_config_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
-# CSS selector lists with fallbacks
-# ---------------------------------------------------------------------------
-
-_RESULT_ITEM_SELECTORS = [
-    "div[role='article']",
-    "div.Nv2PK",
-    "div[class*='result']",
-]
-
-_FEED_CONTAINER_SELECTORS = [
-    "div[role='feed']",
-    "div[aria-label*='Resultados']",
-    "div[aria-label*='Results']",
-    "div.m6QErb.DxyBCb",
-    "div[class*='section-result']",
-]
-
-_NAME_SELECTORS = [
-    "a.hfpxzc",
-    "div.qBF1Pd",
-    "div[role='heading']",
-    "div.Cw1rxb",
-    "h3",
-    "a[aria-label]",
-    "a",
-    "div[class*='heading']",
-]
-
-_CATEGORY_SELECTORS = [
-    "button.DkEaL",
-    "button[class*='category']",
-    "div[class*='category']",
-]
-
-_RATING_SELECTORS = [
-    "span[aria-hidden='true']",
-    "div.F7nice span",
-    "span.z5jxId",
-]
-
-_REVIEWS_SELECTORS = [
-    "span[aria-label*='avalia']",
-    "span[aria-label*='review']",
-    "span[aria-label*='estrela']",
-    "div.F7nice span:last-child",
-]
-
-_ADDRESS_SELECTORS = [
-    "button[data-item-id='address'] div.W4Efsd",
-    "button[data-item-id='address'] span",
-    "div[role='article'] button[data-item-id*='address']",
-    "div[data-item-id='address']",
-    "div.W4Efsd",
-]
-
-_PHONE_SELECTORS = [
-    "button[data-item-id^='phone:'] div.W4Efsd",
-    "button[data-item-id*='phone'] span",
-    "div[role='article'] button[data-item-id^='phone:']",
-    "button[data-item-id*='phone:']",
-    "button[data-item-id*='phone']",
-]
-
-_WEBSITE_SELECTORS = [
-    "a[data-item-id='authority']",
-    "a[aria-label*='site']",
-    "a[href*='http']",
-    "a[class*='website']",
-]
-
-_HOURS_SELECTORS = [
-    "button[data-item-id*='oh'] div.W4Efsd",
-    "button[data-item-id*='hour']",
-    "div.o7FIHe",
-]
-
-_PLACE_LINK_SELECTORS = [
-    "a.hfpxzc",
-    "a[class*='place']",
-]
-
-
-# ---------------------------------------------------------------------------
 # Scraper
 # ---------------------------------------------------------------------------
 
@@ -174,14 +105,12 @@ class GoogleMapsScraper(BaseScraper):
     async def search(
         self, query: str, max_results: int = 20, **kwargs: Any
     ) -> list[dict[str, Any]]:
-        """Search Google Maps for *query* and extract business listings.
-
-        Automatically scrolls the result sidebar to load more results.
-        """
+        """Search Google Maps and extract business listings."""
         sanitized = query.strip().replace(" ", "+")
         search_url = f"{self._cfg['base_url']}/{sanitized}"
-
         min_rating = kwargs.get("min_rating", 0.0)
+        save_debug = kwargs.get("save_debug", False)
+
         logger.info("GMaps scraping: opening %s", search_url)
 
         driver = None
@@ -192,53 +121,52 @@ class GoogleMapsScraper(BaseScraper):
             ) as driver:
                 driver.get(search_url)
 
-                # Wait for the first result to appear
+                # Wait for results
                 if not self._wait_for_results(driver):
                     self._save_debug(driver, query)
                     return []
 
-                # Scroll the feed to load more items
+                # Scroll the feed
                 self._scroll_feed(driver)
-
-                # Random delay after scrolling
                 self._random_delay()
+
+                # ---- Save debug artifacts (same session) ----
+                if save_debug:
+                    self._save_debug(driver, query, also_items=True)
 
                 # Extract items
                 items = self._find_items(driver)
                 logger.info("GMaps scraping: found %d raw items", len(items))
 
-                # Pre-filter: keep only items that look like business cards
-                business_items: list[Any] = []
-                for item in items:
-                    if self._looks_like_business(item):
-                        business_items.append(item)
-                logger.info(
-                    "GMaps scraping: %d business-like items (out of %d raw)",
-                    len(business_items), len(items),
-                )
-                items = business_items
-
                 businesses: list[Business] = []
                 limit = min(max_results, len(items))
                 seen: set[tuple[str, float | None]] = set()
-                discarded_no_name = 0
+                no_name_count = 0
+                no_addr_count = 0
+                no_phone_count = 0
                 discarded_dup = 0
 
                 for item in items[:limit]:
                     try:
-                        biz = self._parse_item(item, query)
+                        biz = self._parse_item(item)
                         if biz is None:
-                            discarded_no_name += 1
-                            if discarded_no_name <= 5:
+                            no_name_count += 1
+                            if no_name_count <= 5:
                                 try:
                                     preview = (item.text or "")[:80]
                                 except Exception:
                                     preview = "(no text)"
                                 logger.debug("Discarded item (no name): %s", preview)
                             continue
+
+                        if biz.address is None:
+                            no_addr_count += 1
+                        if biz.phone is None:
+                            no_phone_count += 1
+
                         if min_rating > 0 and biz.rating is not None and biz.rating < min_rating:
                             continue
-                        # Dedup by (name, rating)
+
                         key = (biz.name.lower().strip(), biz.rating)
                         if key in seen:
                             discarded_dup += 1
@@ -250,9 +178,10 @@ class GoogleMapsScraper(BaseScraper):
                         continue
 
                 logger.info(
-                    "GMaps scraping: %d businesses parsed for query=%r "
-                    "(discarded: %d no name, %d dup)",
-                    len(businesses), query, discarded_no_name, discarded_dup,
+                    "GMaps scraping: %d businesses parsed | "
+                    "No name: %d | No address: %d | No phone: %d | Dup: %d | Raw: %d",
+                    len(businesses), no_name_count, no_addr_count,
+                    no_phone_count, discarded_dup, len(items),
                 )
                 return [b.model_dump() for b in businesses]
 
@@ -265,7 +194,6 @@ class GoogleMapsScraper(BaseScraper):
     async def extract(self, place_url: str, **kwargs: Any) -> dict[str, Any]:
         """Extract detailed info from a single place page."""
         logger.info("GMaps scraping: extracting from %s", place_url)
-
         driver = None
         try:
             async with selenium_driver(
@@ -274,21 +202,11 @@ class GoogleMapsScraper(BaseScraper):
             ) as driver:
                 driver.get(place_url)
                 self._random_delay()
-
                 name = (
                     self._single_text(driver, "h1")
                     or self._single_text(driver, "div[role='heading']")
                 )
-                rating = self._parse_float(
-                    self._single_text(driver, "div.F7nice span[aria-hidden='true']")
-                )
-
-                return Business(
-                    name=name or "Unknown",
-                    rating=rating,
-                    place_url=place_url,
-                ).model_dump()
-
+                return Business(name=name or "Unknown", place_url=place_url).model_dump()
         except Exception as exc:
             logger.error("GMaps extraction failed for %s: %s", place_url, exc)
             if driver:
@@ -300,9 +218,12 @@ class GoogleMapsScraper(BaseScraper):
     # ------------------------------------------------------------------
 
     def _wait_for_results(self, driver: Any) -> bool:
-        """Wait for any known result element to appear."""
         timeout = self._cfg.get("timeout_seconds", 30)
-        for selector in _RESULT_ITEM_SELECTORS + _FEED_CONTAINER_SELECTORS:
+        for selector in [
+            "div.Nv2PK",
+            "div[role='article']",
+            "div[role='feed']",
+        ]:
             try:
                 WebDriverWait(driver, timeout).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, selector))
@@ -314,17 +235,19 @@ class GoogleMapsScraper(BaseScraper):
         return False
 
     def _find_items(self, driver: Any) -> list[Any]:
-        """Return result items using the first matching selector."""
-        for selector in _RESULT_ITEM_SELECTORS:
+        for selector in ["div.Nv2PK", "div[role='article']"]:
             items = driver.find_elements(By.CSS_SELECTOR, selector)
             if items:
-                logger.debug("GMaps items via %s: %d", selector, len(items))
                 return items
         return []
 
     def _find_feed(self, driver: Any) -> Any | None:
-        """Return the scrollable feed container element."""
-        for selector in _FEED_CONTAINER_SELECTORS:
+        for selector in [
+            "div[role='feed']",
+            "div[aria-label*='Resultados']",
+            "div[aria-label*='Results']",
+            "div.m6QErb.DxyBCb",
+        ]:
             try:
                 el = driver.find_element(By.CSS_SELECTOR, selector)
                 if el:
@@ -334,88 +257,46 @@ class GoogleMapsScraper(BaseScraper):
         return None
 
     def _scroll_feed(self, driver: Any) -> None:
-        """Scroll the result feed to load more results (Google Maps lazy loading)."""
         feed = self._find_feed(driver)
         if feed is None:
-            logger.debug("No feed container found — trying body scroll")
+            logger.debug("No feed container — trying body scroll")
             feed = driver
-
         max_scrolls = self._cfg.get("max_scrolls", 10)
         pause_min = self._cfg.get("scroll_pause_min", 1.5)
         pause_max = self._cfg.get("scroll_pause_max", 3.0)
-
         last_count = 0
         stale_count = 0
-
         for i in range(max_scrolls):
             try:
                 driver.execute_script(
-                    "arguments[0].scrollTop = arguments[0].scrollHeight",
-                    feed,
+                    "arguments[0].scrollTop = arguments[0].scrollHeight", feed
                 )
             except Exception:
-                driver.execute_script(
-                    "window.scrollTo(0, document.body.scrollHeight);"
-                )
-
-            pause = random.uniform(pause_min, pause_max)
-            time.sleep(pause)
-
-            # Check if new items appeared
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(random.uniform(pause_min, pause_max))
             current_items = self._find_items(driver)
             current_count = len(current_items)
-
             if current_count == last_count:
                 stale_count += 1
                 if stale_count >= 2:
-                    logger.debug(
-                        "Scroll stopped: no new items after %d scrolls", i + 1
-                    )
+                    logger.debug("Scroll stopped after %d scrolls", i + 1)
                     break
             else:
                 stale_count = 0
-
             last_count = current_count
-            logger.debug("Scroll %d/%d — items: %d", i + 1, max_scrolls, current_count)
 
     # ------------------------------------------------------------------
-    # Internal — item parsing
+    # Internal — item parsing (REAL selectors from saved HTML)
     # ------------------------------------------------------------------
 
-    def _looks_like_business(self, item: Any) -> bool:
-        """Quick check: does this element look like a business card?"""
-        try:
-            html = item.get_attribute("outerHTML") or ""
-            text = str(item.text or "").strip()
-            # Must have either a /maps/place/ link or substantial text
-            if "/maps/place/" in html:
-                return True
-            if len(text) > 10:
-                return True
-            # Check for rating element
-            try:
-                rating_el = item.find_elements(By.CSS_SELECTOR, "span[aria-hidden='true']")
-                if rating_el:
-                    for r in rating_el:
-                        t = (r.text or "").strip()
-                        if t and t.replace(",", ".").replace(" ", ""):
-                            return True
-            except Exception:
-                pass
-        except Exception:
-            # If we can't determine, assume it IS a business
-            return True
-        return False
-
-    def _parse_item(self, item: Any, query: str) -> Business | None:
-        """Parse a single result item into a Business."""
+    def _parse_item(self, item: Any) -> Business | None:
+        """Parse a single Google Maps result card into a Business."""
         name = self._place_name(item)
         if not name:
             return None
 
-        category = self._category(item)
         rating = self._rating(item)
-        reviews = self._reviews_count(item)
+        category = self._category(item)
         address = self._address(item)
         phone = self._phone(item)
         website = self._website(item)
@@ -429,236 +310,218 @@ class GoogleMapsScraper(BaseScraper):
             phone=phone,
             website=website,
             rating=rating,
-            reviews_count=reviews,
+            reviews_count=None,  # Reviews count not available in list view
             opening_hours=hours,
             place_url=place_url,
         )
 
     def _place_name(self, item: Any) -> str | None:
-        """Extract business name using generic strategies."""
-
-        # Strategy 1: find the link that goes to the place page
+        """REAL selector: a.hfpxzc[aria-label] or div.qBF1Pd or span.xxVWCe."""
+        # Strategy 1: a.hfpxzc[aria-label]
         try:
-            links = item.find_elements(By.CSS_SELECTOR, "a[href*='/maps/place/']")
-            for link in links:
+            el = item.find_element(By.CSS_SELECTOR, "a.hfpxzc")
+            aria = el.get_attribute("aria-label")
+            if aria and len(aria.strip()) > 2:
+                return aria.strip()
+        except Exception:
+            pass
+        # Strategy 2: div.qBF1Pd
+        try:
+            el = item.find_element(By.CSS_SELECTOR, "div.qBF1Pd")
+            text = el.text.strip()
+            if text and len(text) > 2:
+                return text
+        except Exception:
+            pass
+        # Strategy 3: span.xxVWCe
+        try:
+            el = item.find_element(By.CSS_SELECTOR, "span.xxVWCe")
+            text = el.text.strip()
+            if text and len(text) > 2:
+                return text
+        except Exception:
+            pass
+        # Strategy 4: any a with aria-label
+        try:
+            for link in item.find_elements(By.CSS_SELECTOR, "a[aria-label]"):
                 aria = link.get_attribute("aria-label")
-                if aria and len(aria.strip()) > 2:
+                if aria and len(aria) > 2:
                     return aria.strip()
-                text = link.text.strip()
-                if text and len(text) > 2:
-                    return text
-                href = link.get_attribute("href") or ""
-                for part in href.split("/maps/place/")[1:]:
-                    decoded = urllib.parse.unquote(part.split("/")[0]).replace("+", " ")
-                    if decoded and len(decoded) > 2:
-                        return decoded
         except Exception:
             pass
-
-        # Strategy 2: find any element with role="heading"
+        # Strategy 5: first long text line
         try:
-            headings = item.find_elements(By.CSS_SELECTOR, "[role='heading']")
-            for h in headings:
-                text = h.text.strip()
-                if text and len(text) > 2:
-                    return text
-        except Exception:
-            pass
-
-        # Strategy 3: find ALL links, return the one with longest text
-        try:
-            links = item.find_elements(By.CSS_SELECTOR, "a")
-            best = ""
-            for link in links:
-                text = link.text.strip()
-                if len(text) > len(best):
-                    best = text
-            if len(best) > 2:
-                return best
-        except Exception:
-            pass
-
-        # Strategy 4: take first long line from all text
-        try:
-            for line in item.text.split("\n"):
+            for line in (item.text or "").split("\n"):
                 line = line.strip()
-                if len(line) > 5:
+                if line and len(line) > 5 and not line.startswith(("⭐", "4", "5")):
                     return line
         except Exception:
             pass
-
         return None
 
-    def _category(self, item: Any) -> str | None:
-        text = self._first_text(item, _CATEGORY_SELECTORS)
-        return text or None
-
     def _rating(self, item: Any) -> float | None:
-        text = self._first_text(item, _RATING_SELECTORS)
-        if not text:
-            return None
-        cleaned = text.strip().replace(",", ".")
+        """REAL selector: span.MW4etd (text like '4,9')."""
         try:
-            return float(cleaned)
-        except ValueError:
+            el = item.find_element(By.CSS_SELECTOR, "span.MW4etd")
+            text = el.text.strip().replace(",", ".")
+            return float(text)
+        except Exception:
             return None
 
-    def _reviews_count(self, item: Any) -> int | None:
-        text = self._first_text(item, _REVIEWS_SELECTORS)
-        if not text:
-            return None
-        # Extract digits from strings like "(123) avaliações" or "123 reviews"
-        import re
-        nums = re.findall(r"\d+", text.replace(".", "").replace(",", ""))
-        if nums:
-            return int(nums[0])
+    def _category(self, item: Any) -> str | None:
+        """Category is the first text in the address block before address."""
+        try:
+            spans = item.find_elements(
+                By.CSS_SELECTOR,
+                "div.W4Efsd > div.W4Efsd > span > span",
+            )
+            for s in spans:
+                t = s.text.strip()
+                if t and t not in ("·",) and not t.startswith(("R.", "Av.", "Rua")):
+                    return t
+        except Exception:
+            pass
         return None
 
     def _address(self, item: Any) -> str | None:
+        """REAL selector: find address-like text in the W4Efsd block."""
         import re
 
-        # Try specific selectors first
-        text = self._first_text(item, _ADDRESS_SELECTORS)
-        if text:
-            # Reject numeric-only values (those are ratings, not addresses)
-            if re.match(r'^\d+[.,]\d+$', text.strip()):
-                return None
-            if len(text.strip()) < 5:
-                return None
-            return text.strip()
+        def _clean(text: str) -> str:
+            """Remove leading · and whitespace."""
+            return re.sub(r'^·\s*', '', text).strip()
 
-        # Aggressive fallback: scan ALL buttons with data-item-id
+        # Strategy 1: look for span containing street pattern
         try:
-            all_buttons = item.find_elements(By.CSS_SELECTOR, "button")
-            for btn in all_buttons:
-                data_id = btn.get_attribute("data-item-id") or ""
-                if "address" in data_id:
-                    addr_text = (btn.text or "").strip()
-                    if addr_text and not re.match(r'^\d+[.,]\d+$', addr_text) and len(addr_text) >= 5:
-                        return addr_text
+            spans = item.find_elements(
+                By.CSS_SELECTOR,
+                "div.W4Efsd > div.W4Efsd span",
+            )
+            for s in spans:
+                t = _clean(s.text.strip())
+                if re.match(r'^[A-Za-z]\.\s', t) or any(p in t for p in ["Rua", "Av.", "Alameda", "Praça", "Avenida"]):
+                    if not re.match(r'^\d+[.,]\d+$', t) and len(t) >= 5:
+                        return t
         except Exception:
             pass
-
-        # Last resort: scan all text lines for address patterns
+        # Strategy 2: try the third span in address block
         try:
-            all_text = item.text.strip()
-            for line in all_text.split("\n"):
-                line = line.strip()
-                if any(p in line for p in ["Rua ", "Av. ", "Alameda ", "Praça "]):
-                    if not re.match(r'^\d+[.,]\d+$', line) and len(line) >= 5:
-                        return line
+            spans = item.find_elements(
+                By.CSS_SELECTOR,
+                "div.W4Efsd > div.W4Efsd > span > span",
+            )
+            texts = [_clean(s.text.strip()) for s in spans if s.text.strip() and s.text.strip() != "·"]
+            for t in texts:
+                if len(t) > 5 and not re.match(r'^\d+[.,]\d+$', t):
+                    return t
         except Exception:
             pass
-
+        # Strategy 3: button[data-item-id="address"]
+        try:
+            for btn in item.find_elements(By.CSS_SELECTOR, "button[data-item-id]"):
+                did = btn.get_attribute("data-item-id") or ""
+                if "address" in did:
+                    t = _clean(btn.text or "")
+                    if t and not re.match(r'^\d+[.,]\d+$', t) and len(t) >= 5:
+                        return t
+        except Exception:
+            pass
         return None
 
     def _phone(self, item: Any) -> str | None:
-        # Try specific selectors first
-        for sel in _PHONE_SELECTORS:
-            try:
-                el = item.find_element(By.CSS_SELECTOR, sel)
-                data_id = el.get_attribute("data-item-id") or ""
-                if ":" in data_id:
-                    return data_id.split(":", 2)[-1]
-                text = (el.text or "").strip()
-                if text:
-                    return text
-            except Exception:
-                continue
-
-        # Fallback: iterate all buttons with data-item-id
+        """REAL selector: span.UsdlK (text like '(19) 3325-0025')."""
         try:
-            buttons = item.find_elements(
-                By.CSS_SELECTOR, "button[data-item-id]"
-            )
-            for btn in buttons:
-                data_id = btn.get_attribute("data-item-id") or ""
-                if data_id.startswith("phone:"):
-                    return data_id.replace("phone:tel:", "").replace("phone:", "")
+            el = item.find_element(By.CSS_SELECTOR, "span.UsdlK")
+            return el.text.strip() or None
         except Exception:
             pass
-
+        # Fallback: scan data-item-id for phone:
+        try:
+            for btn in item.find_elements(By.CSS_SELECTOR, "button[data-item-id]"):
+                did = btn.get_attribute("data-item-id") or ""
+                if "phone" in did:
+                    return did.split(":")[-1]
+        except Exception:
+            pass
         return None
 
     def _website(self, item: Any) -> str | None:
-        for sel in _WEBSITE_SELECTORS:
-            try:
-                el = item.find_element(By.CSS_SELECTOR, sel)
-                href = el.get_attribute("href") or ""
-                # Exclude Google tracking / ad links
-                if href and "google.com/aclk" not in href and "googleadservices" not in href:
-                    return href
-            except Exception:
-                continue
+        """REAL selector: a.lcr4fd.S9kvJb[data-value='Website'] href."""
+        try:
+            el = item.find_element(
+                By.CSS_SELECTOR,
+                "a.lcr4fd.S9kvJb[data-value='Website'], "
+                "a.lcr4fd[data-value='Website'], "
+                "a[aria-label*='Acessar o site']",
+            )
+            href = el.get_attribute("href") or ""
+            if href and "google.com/aclk" not in href and "googleadservices" not in href:
+                return href
+        except Exception:
+            pass
         return None
 
     def _hours(self, item: Any) -> str | None:
-        text = self._first_text(item, _HOURS_SELECTORS)
-        return text or None
+        """REAL selector: span[style*='color: rgba(43,127,63']"""
+        try:
+            el = item.find_element(By.CSS_SELECTOR, "span[style*='color: rgba(43,127,63']")
+            return el.text.strip() or None
+        except Exception:
+            pass
+        return None
 
     def _place_url(self, item: Any) -> str:
-        for sel in _PLACE_LINK_SELECTORS:
-            try:
-                el = item.find_element(By.CSS_SELECTOR, sel)
-                href = el.get_attribute("href")
-                if href:
-                    return href
-            except Exception:
-                continue
-        return ""
+        try:
+            el = item.find_element(By.CSS_SELECTOR, "a.hfpxzc")
+            return el.get_attribute("href") or ""
+        except Exception:
+            return ""
 
     # ------------------------------------------------------------------
     # Internal — helpers
     # ------------------------------------------------------------------
 
-    def _first_text(self, element: Any, selectors: list[str]) -> str:
-        """Try each selector until one returns non-empty text."""
-        for sel in selectors:
-            try:
-                found = element.find_element(By.CSS_SELECTOR, sel)
-                text = found.text.strip()
-                if text:
-                    return text
-            except Exception:
-                continue
-        return ""
-
     def _single_text(self, element: Any, selector: str) -> str:
-        """Single-selector text extraction."""
         try:
             found = element.find_element(By.CSS_SELECTOR, selector)
             return found.text.strip()
         except Exception:
             return ""
 
-    def _parse_float(self, raw: str) -> float | None:
-        if not raw:
-            return None
-        cleaned = raw.strip().replace(",", ".")
-        try:
-            return float(cleaned)
-        except ValueError:
-            return None
-
     def _random_delay(self) -> None:
-        min_s = self._cfg.get("random_delay_min", 2)
-        max_s = self._cfg.get("random_delay_max", 5)
-        time.sleep(random.uniform(min_s, max_s))
+        time.sleep(random.uniform(
+            self._cfg.get("random_delay_min", 2),
+            self._cfg.get("random_delay_max", 5),
+        ))
 
-    def _save_debug(self, driver: Any, label: str) -> None:
-        """Save screenshot + HTML for debugging."""
+    def _save_debug(self, driver: Any, label: str, also_items: bool = False) -> None:
+        """Save screenshot + HTML + individual items for debugging."""
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_dir = Path("data/logs")
         log_dir.mkdir(parents=True, exist_ok=True)
         try:
             shot = log_dir / f"gmaps_debug_{ts}.png"
             driver.save_screenshot(str(shot))
-            logger.info("Debug screenshot saved → %s", shot)
+            logger.info("Debug screenshot → %s", shot)
         except Exception as exc:
             logger.warning("Debug screenshot failed: %s", exc)
         try:
             html_path = log_dir / f"gmaps_debug_{ts}.html"
             html_path.write_text(driver.page_source, encoding="utf-8")
-            logger.info("Debug HTML saved → %s", html_path)
+            logger.info("Debug HTML → %s", html_path)
         except Exception as exc:
             logger.warning("Debug HTML save failed: %s", exc)
+        if also_items:
+            try:
+                items_dir = log_dir / f"gmaps_items_{ts}"
+                items_dir.mkdir(exist_ok=True)
+                items = driver.find_elements(By.CSS_SELECTOR, "div.Nv2PK, div[role='article']")
+                for i, item in enumerate(items[:10]):
+                    try:
+                        outer = item.get_attribute("outerHTML") or item.text
+                        (items_dir / f"item_{i+1}.html").write_text(outer, encoding="utf-8")
+                    except Exception:
+                        pass
+                logger.info("Sample items saved → %s/", items_dir)
+            except Exception as exc:
+                logger.warning("Sample items save failed: %s", exc)
