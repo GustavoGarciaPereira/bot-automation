@@ -1,0 +1,9 @@
+{
+    "plugin_name": "consumidor_gov",
+    "base_url": "https://www.consumidor.gov.br",
+    "headless": true,
+    "timeout_seconds": 30,
+    "max_pages_default": 3,
+    "random_delay_min": 2,
+    "random_delay_max": 4
+}

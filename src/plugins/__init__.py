@@ -3,5 +3,5 @@
 Available platform plugins:
 - mercado_livre/
 - google_maps/
-- reclame_aqui/
+- consumidor_gov/
 """

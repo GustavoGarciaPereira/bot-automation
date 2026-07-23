@@ -1,27 +1,26 @@
 {
-  "client_id": "demo_reclame_aqui",
-  "nome_escritorio": "Demo - Reclame Aqui",
+  "client_id": "demo_consumidor_gov",
+  "nome_escritorio": "Demo - Consumidor.gov.br",
   "use_ai_classifier": true,
   "advogados": [
     {
-      "nome": "Bot RA",
+      "nome": "Bot CG",
       "usuario": null,
       "senha_ref": "VAULT:DEMO",
       "certificado_path": null,
       "email_2fa": null
     }
   ],
-  "portais_ativos": ["reclame_aqui"],
+  "portais_ativos": ["consumidor_gov"],
   "emails_destino": ["demo@example.com"],
   "classification_rules": {
-    "entrega": "Logística",
-    "reembolso": "Financeiro",
-    "atendimento": "Atendimento",
     "produto": "Qualidade",
-    "cancelamento": "Cancelamento"
+    "entrega": "Logística",
+    "cobrança": "Financeiro",
+    "atendimento": "Atendimento"
   },
   "settings": {
-    "company_slug": "magazine-luiza-loja-online",
+    "company_name": "Magazine Luiza",
     "max_pages": 3
   }
 }

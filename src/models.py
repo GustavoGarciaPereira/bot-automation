@@ -24,7 +24,7 @@ class PortalType(str, Enum):
 
     MERCADO_LIVRE = "mercado_livre"
     GOOGLE_MAPS = "google_maps"
-    RECLAME_AQUI = "reclame_aqui"
+    CONSUMIDOR_GOV = "consumidor_gov"
 
 
 class RecordStatus(str, Enum):
