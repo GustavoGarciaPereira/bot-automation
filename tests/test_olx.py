@@ -122,6 +122,26 @@ class TestPrice:
         """Multiple prices: last one wins"""
         assert scraper._extract_price("R$ 4.100\nR$ 3.800") == 3800.0
 
+    def test_price_thousands(self, scraper: OLXScraper) -> None:
+        """R$ 3.800 → 3800.0 (dot is thousand separator)"""
+        assert scraper._extract_price("R$ 3.800") == 3800.0
+
+    def test_price_with_cents(self, scraper: OLXScraper) -> None:
+        """R$ 1.390,50 → 1390.5"""
+        assert scraper._extract_price("R$ 1.390,50") == 1390.5
+
+
+class TestLocation:
+    def test_online_prefix(self, scraper: OLXScraper) -> None:
+        """Text 'Online\nSão Paulo - SP' → 'São Paulo - SP'"""
+        assert scraper._extract_location("Online\nSão Paulo - SP") == "São Paulo - SP"
+
+    def test_simple(self, scraper: OLXScraper) -> None:
+        assert scraper._extract_location("Campinas, SP") is None  # comma separator, not hyphen
+
+    def test_hyphen(self, scraper: OLXScraper) -> None:
+        assert scraper._extract_location("São Paulo - SP") == "São Paulo - SP"
+
 
 class TestModels:
     def test_defaults(self) -> None:

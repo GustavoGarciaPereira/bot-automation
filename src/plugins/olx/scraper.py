@@ -265,11 +265,16 @@ class OLXScraper(BaseScraper):
             return None
 
     def _extract_location(self, text: str) -> str | None:
-        m = re.search(
-            r"([A-ZÀ-Ú][a-zà-ú]+(?:\s[A-ZÀ-Ú][a-zà-ú]+)*)\s*-\s*([A-Z]{2})",
+        # Find all "City - UF" patterns, take the LAST one
+        # Use a space (not \s) to avoid matching across newlines
+        matches = list(re.finditer(
+            r"([A-ZÀ-Ú][a-zà-ú]+(?: [A-ZÀ-Ú][a-zà-ú]+)*)\s*-\s*([A-Z]{2})",
             text,
-        )
-        return f"{m.group(1)} - {m.group(2)}" if m else None
+        ))
+        if not matches:
+            return None
+        m = matches[-1]
+        return f"{m.group(1)} - {m.group(2)}"
 
     def _extract_date(self, text: str) -> str | None:
         m = re.search(r"(Hoje|Ontem|\d{2}/\d{2}(?:/\d{4})?),?\s*(\d{2}:\d{2})?", text)
