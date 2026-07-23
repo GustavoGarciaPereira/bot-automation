@@ -253,28 +253,70 @@ class OLXScraper(BaseScraper):
         )
 
     def _extract_price(self, text: str) -> float | None:
-        """Extract price via regex. If multiple prices, last is current."""
+        """Extract price via regex. Take the LARGEST price (skip installments)."""
         prices = re.findall(r"R\$\s*([\d.,]+)", text)
         if not prices:
             return None
-        raw = prices[-1]  # last = discounted price
-        raw = raw.replace(".", "").replace(",", ".")
+        # Parse all prices, take the largest (skips installment values like "R$ 380,00")
+        best = None
+        best_val = 0.0
+        for raw in prices:
+            val = self._parse_brl_price(raw)
+            if val is not None and val > best_val:
+                best_val = val
+                best = raw
+        if best is None:
+            return None
+        return best_val
+
+    def _parse_brl_price(self, raw: str) -> float | None:
+        """Parse a Brazilian price string to float.
+        
+        "3.800" → 3800.0
+        "1.390,50" → 1390.5
+        "380,00" → 380.0
+        "500" → 500.0
+        """
+        if not raw:
+            return None
+        if "," in raw and "." in raw:
+            # "1.390,50" → remove dots (milhar), replace comma with dot
+            cleaned = raw.replace(".", "").replace(",", ".")
+        elif "," in raw:
+            # "380,00" → replace comma with dot
+            cleaned = raw.replace(",", ".")
+        elif "." in raw:
+            # "3.800" — is the dot thousand separator or decimal?
+            parts = raw.split(".")
+            if len(parts) == 2 and len(parts[1]) == 3:
+                # "3.800" → 3 digits after dot = thousand separator
+                cleaned = raw.replace(".", "")
+            elif len(parts) == 2 and len(parts[1]) <= 2:
+                # "3.50" → decimal
+                cleaned = raw.replace(",", ".") if "," in raw else raw
+            else:
+                # "12.000" → multiple dots = thousand separator
+                cleaned = raw.replace(".", "")
+        else:
+            cleaned = raw
         try:
-            return float(raw)
+            return float(cleaned)
         except ValueError:
             return None
 
     def _extract_location(self, text: str) -> str | None:
         # Find all "City - UF" patterns, take the LAST one
-        # Use a space (not \s) to avoid matching across newlines
+        # Match everything before " - UF" (supports "Rio de Janeiro - RJ")
         matches = list(re.finditer(
-            r"([A-ZÀ-Ú][a-zà-ú]+(?: [A-ZÀ-Ú][a-zà-ú]+)*)\s*-\s*([A-Z]{2})",
+            r"(.+?)\s*-\s*([A-Z]{2})",
             text,
         ))
         if not matches:
             return None
         m = matches[-1]
-        return f"{m.group(1)} - {m.group(2)}"
+        city = m.group(1).strip()
+        uf = m.group(2)
+        return f"{city} - {uf}" if city else None
 
     def _extract_date(self, text: str) -> str | None:
         m = re.search(r"(Hoje|Ontem|\d{2}/\d{2}(?:/\d{4})?),?\s*(\d{2}:\d{2})?", text)

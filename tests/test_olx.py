@@ -111,36 +111,51 @@ class TestSearch:
 
 class TestPrice:
     def test_brl(self, scraper: OLXScraper) -> None:
-        """R$ 1.200 → 1200.0 via _extract_price"""
+        """R$ 1.200 → 1200.0"""
         assert scraper._extract_price("R$ 1.200") == 1200.0
 
     def test_gratis(self, scraper: OLXScraper) -> None:
-        """Grátis → None (not matched by R$ regex)"""
         assert scraper._extract_price("Grátis") is None
 
-    def test_two_prices(self, scraper: OLXScraper) -> None:
-        """Multiple prices: last one wins"""
-        assert scraper._extract_price("R$ 4.100\nR$ 3.800") == 3800.0
+    def test_two_prices_takes_largest(self, scraper: OLXScraper) -> None:
+        """R$ 4.100 + installment R$ 380,00 → largest wins (4100.0)"""
+        text = "R$ 4.100 em até 10x de R$ 380,00"
+        assert scraper._extract_price(text) == 4100.0
 
     def test_price_thousands(self, scraper: OLXScraper) -> None:
-        """R$ 3.800 → 3800.0 (dot is thousand separator)"""
         assert scraper._extract_price("R$ 3.800") == 3800.0
 
     def test_price_with_cents(self, scraper: OLXScraper) -> None:
-        """R$ 1.390,50 → 1390.5"""
         assert scraper._extract_price("R$ 1.390,50") == 1390.5
+
+    def test_parse_brl_3800(self, scraper: OLXScraper) -> None:
+        assert scraper._parse_brl_price("3.800") == 3800.0
+
+    def test_parse_brl_1000(self, scraper: OLXScraper) -> None:
+        assert scraper._parse_brl_price("1.000") == 1000.0
+
+    def test_parse_brl_12000(self, scraper: OLXScraper) -> None:
+        assert scraper._parse_brl_price("12.000") == 12000.0
+
+    def test_parse_brl_380_00(self, scraper: OLXScraper) -> None:
+        assert scraper._parse_brl_price("380,00") == 380.0
+
+    def test_parse_brl_800(self, scraper: OLXScraper) -> None:
+        assert scraper._parse_brl_price("800") == 800.0
 
 
 class TestLocation:
     def test_online_prefix(self, scraper: OLXScraper) -> None:
-        """Text 'Online\nSão Paulo - SP' → 'São Paulo - SP'"""
         assert scraper._extract_location("Online\nSão Paulo - SP") == "São Paulo - SP"
 
-    def test_simple(self, scraper: OLXScraper) -> None:
-        assert scraper._extract_location("Campinas, SP") is None  # comma separator, not hyphen
+    def test_rio_de_janeiro(self, scraper: OLXScraper) -> None:
+        assert scraper._extract_location("Rio de Janeiro - RJ") == "Rio de Janeiro - RJ"
 
     def test_hyphen(self, scraper: OLXScraper) -> None:
         assert scraper._extract_location("São Paulo - SP") == "São Paulo - SP"
+
+    def test_none(self, scraper: OLXScraper) -> None:
+        assert scraper._extract_location("Sem localização") is None
 
 
 class TestModels:
