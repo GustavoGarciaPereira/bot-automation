@@ -177,6 +177,12 @@ class ReclameAquiScraper(BaseScraper):
 
         if " " in company_slug or not re.match(r"^[a-z0-9-]+$", company_slug):
             company_slug = slugify(company_slug)
+            logger.warning(
+                "RA: slug auto-generated to '%s'. "
+                "Each RA company has a specific slug. "
+                "If this fails, verify the correct slug at reclameaqui.com.br",
+                company_slug,
+            )
 
         max_pages = max_pages or self._cfg.get("max_pages_default", 3)
         company_url = f"{self._cfg['base_url']}/empresa/{company_slug}/reclamacoes"
@@ -188,21 +194,32 @@ class ReclameAquiScraper(BaseScraper):
         no_title = 0
         dup = 0
 
+        # URLs to try (some companies use different slug patterns)
+        urls_to_try = [
+            company_url,
+            f"{self._cfg['base_url']}/empresa/{company_slug}/",
+            f"{self._cfg['base_url']}/{company_slug}/",
+        ]
+
         try:
             async with selenium_driver(
                 headless=self._headless,
                 remote_url=self._remote_url,
             ) as driver:
-                driver.get(company_url)
-                self._random_delay()
+                page_loaded = False
+                for try_url in urls_to_try:
+                    logger.info("RA: trying URL %s", try_url)
+                    driver.get(try_url)
+                    self._random_delay()
+                    self._close_modals(driver)
+                    if self._wait_for_content(driver):
+                        page_loaded = True
+                        break
+                    logger.warning("RA: no content at %s — trying next URL", try_url)
 
-                # Close modals
-                self._close_modals(driver)
-
-                # Wait for JS to render content
-                if not self._wait_for_content(driver):
+                if not page_loaded:
                     self._save_debug(driver, company_slug)
-                    logger.warning("RA: JS did not render complaints — possible block")
+                    logger.warning("RA: no content found at any URL for %s", company_slug)
                     return []
 
                 # Scroll to trigger lazy loading

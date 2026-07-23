@@ -25,7 +25,7 @@ async def main() -> None:
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="Test Reclame Aqui scraper")
-    parser.add_argument("--company", default="magazine-luiza")
+    parser.add_argument("--company", default="magazine-luiza-loja-online")
     parser.add_argument("--pages", type=int, default=2)
     parser.add_argument("--visible", action="store_true")
     parser.add_argument("--debug", action="store_true")
