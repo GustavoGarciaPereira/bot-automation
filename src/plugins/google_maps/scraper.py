@@ -229,6 +229,12 @@ class GoogleMapsScraper(BaseScraper):
                         biz = self._parse_item(item, query)
                         if biz is None:
                             discarded_no_name += 1
+                            if discarded_no_name <= 5:
+                                try:
+                                    preview = (item.text or "")[:80]
+                                except Exception:
+                                    preview = "(no text)"
+                                logger.debug("Discarded item (no name): %s", preview)
                             continue
                         if min_rating > 0 and biz.rating is not None and biz.rating < min_rating:
                             continue
