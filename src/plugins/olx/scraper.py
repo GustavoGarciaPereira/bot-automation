@@ -199,11 +199,62 @@ class OLXScraper(BaseScraper):
     def _parse_card(self, card: Any) -> OLXAd | None:
         title = self._first_text(card, _TITLE_SELECTORS)
         if not title:
-            return None
+            # Fallback: try text-based extraction
+            try:
+                raw = card.text.strip()
+                if not raw:
+                    logger.debug("OLX item vazio")
+                    return None
+                lines = [l.strip() for l in raw.split("\n") if l.strip()]
+                if not lines:
+                    return None
+                # Title: first long line that isn't a price
+                for line in lines:
+                    if len(line) > 10 and not re.match(r"^R?\$?\s*[\d.,]+", line):
+                        title = line
+                        break
+                if not title:
+                    title = lines[0]
+            except Exception:
+                pass
+            if not title:
+                logger.debug("OLX: item sem título. Text: %s", raw[:100] if 'raw' in dir() else "?")
+                return None
 
         price = self._parse_price(card)
+        if price is None:
+            # Fallback: find price in raw text
+            try:
+                raw = card.text.strip()
+                m = re.search(r"R\$\s*([\d.,]+)", raw)
+                if m:
+                    price = self._parse_price_str(m.group(1))
+            except Exception:
+                pass
+
         location = self._first_text(card, _LOCATION_SELECTORS)
+        if not location:
+            # Fallback: look for "City - ST" pattern
+            try:
+                raw = card.text.strip()
+                m = re.search(r"([A-Za-zÀ-ÿ\s]+)\s*-\s*[A-Z]{2}", raw)
+                if m:
+                    location = m.group(0)
+            except Exception:
+                pass
+
         date = self._first_text(card, _DATE_SELECTORS)
+        if not date:
+            # Fallback: look for date-like text
+            try:
+                raw = card.text.strip()
+                for line in raw.split("\n"):
+                    if re.search(r"(Hoje|Ontem|\d{2}/\d{2})", line):
+                        date = line.strip()
+                        break
+            except Exception:
+                pass
+
         link = self._first_attr(card, _LINK_SELECTORS)
         img = self._first_attr(card, _IMAGE_SELECTORS)
         prof = bool(self._first_text(card, _PROFESSIONAL_SELECTORS))
@@ -218,10 +269,15 @@ class OLXScraper(BaseScraper):
         text = self._first_text(card, _PRICE_SELECTORS)
         if not text:
             return None
-        if "grátis" in text.lower() or "gratis" in text.lower():
+        return self._parse_price_str(text)
+
+    def _parse_price_str(self, raw: str) -> float | None:
+        """Parse a price string like 'R$ 1.200' or 'R$ 3.499,90' into float."""
+        if not raw:
+            return None
+        if "grátis" in raw.lower() or "gratis" in raw.lower():
             return 0.0
-        text = text.replace("R$", "").replace(" ", "").strip()
-        # Brazilian format: 1.234,56 or just 1.200
+        text = raw.replace("R$", "").replace(" ", "").strip()
         if re.search(r",\d{2}$", text):
             text = text.replace(".", "").replace(",", ".")
         elif "." in text and "," not in text:
