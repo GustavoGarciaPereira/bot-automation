@@ -90,7 +90,7 @@ def scraper() -> ReclameAquiScraper:
 
 class TestSlugify:
     def test_basic(self) -> None:
-        assert slugify("Magazine Luiza") == "magazine-luiza"
+        assert slugify("Magazine Luiza") == "magazine-luiza-loja-online"
 
     def test_accent(self) -> None:
         assert slugify("João & Maria Ltda") == "joao-maria-ltda"
@@ -123,7 +123,7 @@ class TestSearch:
         ]
         mock_driver.find_elements.return_value = mock_items
 
-        results = await scraper.search("magazine-luiza", max_pages=1)
+        results = await scraper.search("magazine-luiza-loja-online", max_pages=1)
 
         assert len(results) == 3
         assert results[0]["title"] == "Problema A"
@@ -271,4 +271,4 @@ class TestPluginDryRun:
         ConfigManager.clear_cache()
         config = ConfigManager.get_client_config("demo_reclame_aqui")
         assert config.client_id == "demo_reclame_aqui"
-        assert config.settings.get("company_slug") == "magazine-luiza"
+        assert config.settings.get("company_slug") == "magazine-luiza-loja-online"
