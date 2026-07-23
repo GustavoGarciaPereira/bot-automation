@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import random
 import time
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -392,38 +393,55 @@ class GoogleMapsScraper(BaseScraper):
         )
 
     def _place_name(self, item: Any) -> str | None:
-        """Extract business name using multiple fallback selectors."""
-        for sel in _NAME_SELECTORS:
-            try:
-                el = item.find_element(By.CSS_SELECTOR, sel)
-                # Try aria-label first (it often has the clean name)
-                label = el.get_attribute("aria-label")
-                if label and len(label.strip()) > 2:
-                    return label.strip()
-                text = el.text.strip()
+        """Extract business name using generic strategies."""
+
+        # Strategy 1: find the link that goes to the place page
+        try:
+            links = item.find_elements(By.CSS_SELECTOR, "a[href*='/maps/place/']")
+            for link in links:
+                aria = link.get_attribute("aria-label")
+                if aria and len(aria.strip()) > 2:
+                    return aria.strip()
+                text = link.text.strip()
                 if text and len(text) > 2:
                     return text
-                # For a.hfpxzc, sometimes the href has the name
-                href = el.get_attribute("href")
-                if href and "/maps/place/" in href:
-                    import urllib.parse
-                    parts = href.split("/maps/place/")
-                    if len(parts) > 1:
-                        name_part = parts[1].split("/")[0]
-                        decoded = urllib.parse.unquote(name_part).replace("+", " ")
-                        if decoded and len(decoded) > 2:
-                            return decoded
-            except Exception:
-                continue
+                href = link.get_attribute("href") or ""
+                for part in href.split("/maps/place/")[1:]:
+                    decoded = urllib.parse.unquote(part.split("/")[0]).replace("+", " ")
+                    if decoded and len(decoded) > 2:
+                        return decoded
+        except Exception:
+            pass
 
-        # Last resort: try any element with significant text
+        # Strategy 2: find any element with role="heading"
         try:
-            all_text = item.text.strip()
-            if all_text and len(all_text) > 3:
-                # Take the first line or first sentence as name
-                first_line = all_text.split("\n")[0].strip()
-                if first_line and len(first_line) > 2:
-                    return first_line
+            headings = item.find_elements(By.CSS_SELECTOR, "[role='heading']")
+            for h in headings:
+                text = h.text.strip()
+                if text and len(text) > 2:
+                    return text
+        except Exception:
+            pass
+
+        # Strategy 3: find ALL links, return the one with longest text
+        try:
+            links = item.find_elements(By.CSS_SELECTOR, "a")
+            best = ""
+            for link in links:
+                text = link.text.strip()
+                if len(text) > len(best):
+                    best = text
+            if len(best) > 2:
+                return best
+        except Exception:
+            pass
+
+        # Strategy 4: take first long line from all text
+        try:
+            for line in item.text.split("\n"):
+                line = line.strip()
+                if len(line) > 5:
+                    return line
         except Exception:
             pass
 

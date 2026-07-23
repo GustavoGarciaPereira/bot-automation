@@ -84,9 +84,31 @@ def _mock_item(
 
     item.find_element.side_effect = _find
 
-    # Fallback: find_elements for phone buttons iteration
+    # Fallback: find_elements for various selectors
     def _find_elems(by: str, selector: str) -> list[MagicMock]:
         if "button[data-item-id]" in selector:
+            if phone:
+                btn = MagicMock()
+                btn.get_attribute.return_value = f"phone:tel:{phone}"
+                return [btn]
+            return []
+        if "/maps/place/" in selector:
+            link = MagicMock()
+            link.get_attribute.side_effect = lambda k: {
+                "href": place_url,
+                "aria-label": name,
+            }.get(k, "")
+            link.text = name
+            return [link]
+        if "role='heading'" in selector or "heading" in selector:
+            h = MagicMock()
+            h.text = name
+            return [h]
+        if selector.strip() == "a":
+            link = MagicMock()
+            link.text = name
+            return [link]
+        if "button" in selector:
             if phone:
                 btn = MagicMock()
                 btn.get_attribute.return_value = f"phone:tel:{phone}"
