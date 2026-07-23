@@ -1,9 +1,8 @@
 """Thin wrapper around LangChain for LLM-based classification.
 
 Supports (priority order):
-1. DeepSeek    — ``LLM_API_KEY`` + ``LLM_BASE_URL`` (default: api.deepseek.com)
-2. Azure OpenAI — ``AZURE_OPENAI_API_KEY``
-3. OpenAI      — ``OPENAI_API_KEY``
+1. DeepSeek    — ``DEEPSEEK_API_KEY`` (or legacy ``LLM_API_KEY``)
+2. OpenAI      — ``OPENAI_API_KEY`` (vanilla or compatible)
 
 All providers use the OpenAI-compatible API via ``langchain_openai.ChatOpenAI``.
 Configuration is 100% environment-driven — nothing is hardcoded.
@@ -36,7 +35,7 @@ _DEFAULT_MAX_TOKENS = 512
 class LLMClient:
     """Async wrapper around LangChain's ``ChatOpenAI``.
 
-    Works with DeepSeek, OpenAI, Azure OpenAI, or any OpenAI-compatible API.
+    Works with DeepSeek, OpenAI, or any OpenAI-compatible API.
     Instantiate once and inject into ``HybridClassifier``.
     """
 
@@ -52,9 +51,22 @@ class LLMClient:
         **kwargs: Any,
     ) -> None:
         # -- Resolve config (arg → env → default) -------------------------
-        self._api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
-        self._model_name = model_name or os.getenv("LLM_MODEL", _DEFAULT_MODEL)
-        self._base_url = base_url or os.getenv("LLM_BASE_URL", _DEFAULT_BASE_URL)
+        self._api_key = (
+            api_key
+            or os.getenv("DEEPSEEK_API_KEY")
+            or os.getenv("LLM_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+        )
+        self._model_name = (
+            model_name
+            or os.getenv("DEEPSEEK_MODEL")
+            or os.getenv("LLM_MODEL", _DEFAULT_MODEL)
+        )
+        self._base_url = (
+            base_url
+            or os.getenv("DEEPSEEK_BASE_URL")
+            or os.getenv("LLM_BASE_URL", _DEFAULT_BASE_URL)
+        )
         self._temperature = (
             temperature
             if temperature is not None
@@ -67,7 +79,7 @@ class LLMClient:
 
         if not self._api_key:
             raise ValueError(
-                "Nenhuma API key configurada. Defina LLM_API_KEY ou OPENAI_API_KEY no .env"
+                "Nenhuma API key configurada. Defina DEEPSEEK_API_KEY ou OPENAI_API_KEY no .env"
             )
 
         # Build eagerly so misconfiguration fails fast
@@ -102,23 +114,19 @@ class LLMClient:
     def from_env(cls) -> LLMClient | None:
         """Create an ``LLMClient`` from environment variables.
 
-        Priority: ``LLM_API_KEY`` → ``AZURE_OPENAI_API_KEY`` → ``OPENAI_API_KEY``.
+        Priority: ``DEEPSEEK_API_KEY`` → ``LLM_API_KEY`` → ``OPENAI_API_KEY``.
         Returns ``None`` when no API key is configured so the orchestrator
         can skip AI classification gracefully.
         """
-        # 1. DeepSeek / custom OpenAI-compatible provider
+        # 1. DeepSeek (new var name)
+        if os.getenv("DEEPSEEK_API_KEY"):
+            logger.info("LLM: DeepSeek (model=%s)", os.getenv("DEEPSEEK_MODEL", _DEFAULT_MODEL))
+            return cls()
+
+        # 2. DeepSeek / custom (legacy var name)
         if os.getenv("LLM_API_KEY"):
             logger.info("LLM: DeepSeek / custom provider (model=%s)", os.getenv("LLM_MODEL", _DEFAULT_MODEL))
             return cls()
-
-        # 2. Azure OpenAI
-        if os.getenv("AZURE_OPENAI_API_KEY"):
-            logger.info("LLM: Azure OpenAI (deployment=%s)", os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini"))
-            return cls(
-                model_name=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini"),
-                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-                openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"),
-            )
 
         # 3. Vanilla OpenAI
         if os.getenv("OPENAI_API_KEY"):
@@ -137,10 +145,8 @@ class LLMClient:
 
     @property
     def _provider_label(self) -> str:
-        if os.getenv("LLM_API_KEY"):
-            return os.getenv("LLM_BASE_URL", _DEFAULT_BASE_URL)
-        if os.getenv("AZURE_OPENAI_API_KEY"):
-            return "azure"
+        if os.getenv("DEEPSEEK_API_KEY") or os.getenv("LLM_API_KEY"):
+            return os.getenv("DEEPSEEK_BASE_URL") or os.getenv("LLM_BASE_URL", _DEFAULT_BASE_URL)
         return "openai"
 
     def _build_llm(self) -> Any:
@@ -154,18 +160,9 @@ class LLMClient:
             "max_retries": self._max_retries,
         }
 
-        # Azure path — needs extra params, no base_url
-        if os.getenv("AZURE_OPENAI_API_KEY"):
-            kwargs["azure_endpoint"] = self._extra_kwargs.get("azure_endpoint") or os.getenv(
-                "AZURE_OPENAI_ENDPOINT"
-            )
-            kwargs["openai_api_version"] = self._extra_kwargs.get(
-                "openai_api_version"
-            ) or os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
-        else:
-            # DeepSeek / OpenAI / any compatible provider
-            kwargs["base_url"] = self._base_url
-            kwargs["api_key"] = self._api_key
+        # DeepSeek / OpenAI / any compatible provider
+        kwargs["base_url"] = self._base_url
+        kwargs["api_key"] = self._api_key
 
         # Merge any remaining extra kwargs
         kwargs.update(
@@ -181,3 +178,4 @@ class LLMClient:
         )
 
         return ChatOpenAI(**kwargs)
+
