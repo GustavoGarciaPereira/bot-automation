@@ -30,6 +30,11 @@ class OLXPlugin(PortalPlugin):
 
     async def authenticate(self, advogado: Advogado, config: dict[str, Any]) -> bool:
         self._settings = config.get("settings", {})
+        if self.headless:
+            logger.warning(
+                "OLX pode bloquear Chrome headless. "
+                "Se 0 resultados, tente: --no-headless"
+            )
         return True
 
     async def fetch_intimations(self, advogado: Advogado, data_referencia: str) -> list[dict[str, Any]]:
