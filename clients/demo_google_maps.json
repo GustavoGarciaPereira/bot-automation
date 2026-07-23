@@ -19,5 +19,10 @@
     "pediatra": "Pediatria",
     "ortopedista": "Ortopedia",
     "dermatologista": "Dermatologia"
+  },
+  "settings": {
+    "search_query": "dentistas em campinas sp",
+    "max_results": 20,
+    "min_rating": 4.0
   }
 }
