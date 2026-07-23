@@ -26,6 +26,10 @@ def _mock_item(
 ) -> MagicMock:
     """Create a mock Selenium element representing a Google Maps result item."""
     item = MagicMock()
+    item.get_attribute.side_effect = lambda k: {
+        "outerHTML": f'<div role="article"><a aria-label="{name}" href="{place_url}">{name}</a></div>',
+    }.get(k, "")
+    item.text = f"{name}\nRua X, 123\n019-3234-5678\n{reviews}"
 
     def _find(by: str, selector: str) -> MagicMock:
         el = MagicMock()

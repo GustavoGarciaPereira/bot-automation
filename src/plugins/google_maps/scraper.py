@@ -207,6 +207,17 @@ class GoogleMapsScraper(BaseScraper):
                 items = self._find_items(driver)
                 logger.info("GMaps scraping: found %d raw items", len(items))
 
+                # Pre-filter: keep only items that look like business cards
+                business_items: list[Any] = []
+                for item in items:
+                    if self._looks_like_business(item):
+                        business_items.append(item)
+                logger.info(
+                    "GMaps scraping: %d business-like items (out of %d raw)",
+                    len(business_items), len(items),
+                )
+                items = business_items
+
                 businesses: list[Business] = []
                 limit = min(max_results, len(items))
                 seen: set[tuple[str, float | None]] = set()
@@ -364,6 +375,31 @@ class GoogleMapsScraper(BaseScraper):
     # ------------------------------------------------------------------
     # Internal — item parsing
     # ------------------------------------------------------------------
+
+    def _looks_like_business(self, item: Any) -> bool:
+        """Quick check: does this element look like a business card?"""
+        try:
+            html = item.get_attribute("outerHTML") or ""
+            text = str(item.text or "").strip()
+            # Must have either a /maps/place/ link or substantial text
+            if "/maps/place/" in html:
+                return True
+            if len(text) > 10:
+                return True
+            # Check for rating element
+            try:
+                rating_el = item.find_elements(By.CSS_SELECTOR, "span[aria-hidden='true']")
+                if rating_el:
+                    for r in rating_el:
+                        t = (r.text or "").strip()
+                        if t and t.replace(",", ".").replace(" ", ""):
+                            return True
+            except Exception:
+                pass
+        except Exception:
+            # If we can't determine, assume it IS a business
+            return True
+        return False
 
     def _parse_item(self, item: Any, query: str) -> Business | None:
         """Parse a single result item into a Business."""

@@ -83,3 +83,5 @@ docker-compose.override.yml
 # Reasonix
 # ---------------------------------------------------------------------------
 .reasonix/
+
+session-*.md
