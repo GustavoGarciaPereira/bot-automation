@@ -3,5 +3,5 @@
 Available platform plugins:
 - mercado_livre/
 - google_maps/
-- google_shopping/
+- olx/
 """

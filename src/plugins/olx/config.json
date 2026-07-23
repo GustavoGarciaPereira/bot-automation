@@ -1,6 +1,6 @@
 {
-    "plugin_name": "google_shopping",
-    "base_url": "https://www.google.com/search",
+    "plugin_name": "olx",
+    "base_url": "https://www.olx.com.br",
     "headless": true,
     "timeout_seconds": 30,
     "max_scrolls": 3,

@@ -1,11 +1,11 @@
 {
-  "client_id": "demo_google_shopping",
-  "nome_escritorio": "Demo - Google Shopping",
+  "client_id": "demo_olx",
+  "nome_escritorio": "Demo - OLX",
   "use_ai_classifier": true,
   "advogados": [
-    {"nome": "Bot Shop", "usuario": null, "senha_ref": "VAULT:DEMO", "certificado_path": null, "email_2fa": null}
+    {"nome": "Bot OLX", "usuario": null, "senha_ref": "VAULT:DEMO", "certificado_path": null, "email_2fa": null}
   ],
-  "portais_ativos": ["google_shopping"],
+  "portais_ativos": ["olx"],
   "emails_destino": ["demo@example.com"],
   "classification_rules": {
     "notebook": "Informática", "iphone": "Celulares"
