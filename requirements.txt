@@ -8,6 +8,7 @@
 pydantic>=2.5,<3
 python-dotenv>=1.0,<2
 tenacity>=8.2,<9
+undetected-chromedriver>=3.5,<4   # Anti-bot patched ChromeDriver
 
 # --- Web Scraping ------------------------------------------------------------
 selenium>=4.15,<5
