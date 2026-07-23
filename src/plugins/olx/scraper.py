@@ -1,4 +1,17 @@
-"""OLX Brasil scraper — Selenium-based for product/classified ads."""
+"""OLX Brasil scraper — Selenium + regex hybrid parsing.
+
+# ============================================================
+# REAL OLX STRUCTURE (confirmed via debug HTML)
+# ============================================================
+# Container:  div[class*='AdCard'] → 50 found
+# Title:      h2 or h3 inside card
+# Price:      "R$ 3.800" text → regex r'R\$\s*([\d.,]+)'
+# Location:   "São Paulo - SP" → regex Cidade - UF
+# Date:       "Hoje, 00:45" → regex (Hoje|Ontem|\d{2}/\d{2})
+# Image:      img[src*='img.olx.com.br']
+# Link:       a[href*='olx.com.br'] or a[href*='/anuncio/']
+# ============================================================
+"""
 
 from __future__ import annotations
 
@@ -57,63 +70,17 @@ def _clear_config_cache() -> None:
 
 
 _CONTAINER_SELECTORS = [
+    "div[class*='AdCard']",
     "div[data-testid='ad-card']",
     "div.ad-card",
-    "div[class*='AdCard']",
-    "li.ad-item",
-    "div[class*='ad-item']",
     "div[class*='card']",
 ]
 
-_TITLE_SELECTORS = [
-    "h2 a",
-    "h2[class*='title']",
-    "h3[class*='title']",
-    "span[class*='title']",
-    "a[class*='title']",
-    "a[data-testid='ad-card-link']",
-]
-
-_PRICE_SELECTORS = [
-    "span[class*='price']",
-    "div[class*='price']",
-    "span[class*='Price']",
-    "div[class*='Price']",
-]
-
-_LOCATION_SELECTORS = [
-    "span[class*='location']",
-    "div[class*='location']",
-    "span[class*='municipality']",
-]
-
-_DATE_SELECTORS = [
-    "span[class*='date']",
-    "div[class*='date']",
-    "span[class*='Date']",
-]
-
-_LINK_SELECTORS = [
-    ("a[href*='/anuncio/']", "href"),
-    ("a[data-testid='ad-card-link']", "href"),
-    ("a", "href"),
-]
-
-_IMAGE_SELECTORS = [
-    ("img[src]", "src"),
-    ("img[data-src]", "data-src"),
-    ("img", "src"),
-]
-
-_PROFESSIONAL_SELECTORS = [
-    "span[class*='professional']",
-    "span[class*='badge']",
-    "span[class*='store']",
-]
+_TITLE_SELECTORS = ["h2", "h3", "[class*='title']", "[class*='Title']"]
 
 
 class OLXScraper(BaseScraper):
-    """Scraper for OLX Brasil classified ads."""
+    """Scraper for OLX Brasil — Selenium + regex hybrid parsing."""
 
     def __init__(self, headless: bool = True, remote_url: str | None = None) -> None:
         self._cfg = _load_config()
@@ -123,9 +90,10 @@ class OLXScraper(BaseScraper):
     async def search(
         self, query: str, max_results: int = 15, **kwargs: Any
     ) -> list[dict[str, Any]]:
+        save_debug = kwargs.get("save_debug", False)
         sanitized = query.strip().lower().replace(" ", "-")
         url = f"{self._cfg['base_url']}/brasil?q={sanitized}"
-        logger.info("OLX: searching %s (max %d)", url, max_results)
+        logger.info("OLX: %s (max %d)", url, max_results)
 
         driver = None
         try:
@@ -140,6 +108,11 @@ class OLXScraper(BaseScraper):
                     return []
 
                 self._scroll(driver)
+
+                # Save debug artifacts in the SAME session
+                if save_debug:
+                    self._save_debug(driver, query, save_items=True)
+
                 cards = self._find_cards(driver)
                 logger.info("OLX: %d raw items", len(cards))
 
@@ -168,9 +141,13 @@ class OLXScraper(BaseScraper):
     async def extract(self, ad_url: str, **kwargs: Any) -> dict[str, Any]:
         return {}
 
+    # ------------------------------------------------------------------
+    # Navigation
+    # ------------------------------------------------------------------
+
     def _wait_for_results(self, driver: Any) -> bool:
         timeout = self._cfg.get("timeout_seconds", 30)
-        for sel in _CONTAINER_SELECTORS + ["div[data-testid]", "main", "section"]:
+        for sel in _CONTAINER_SELECTORS + ["main", "section", "div[data-testid]"]:
             try:
                 WebDriverWait(driver, timeout).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, sel))
@@ -196,112 +173,100 @@ class OLXScraper(BaseScraper):
             except Exception:
                 break
 
+    # ------------------------------------------------------------------
+    # Parsing — hybrid (CSS selectors + regex fallback)
+    # ------------------------------------------------------------------
+
     def _parse_card(self, card: Any) -> OLXAd | None:
-        title = self._first_text(card, _TITLE_SELECTORS)
-        if not title:
-            # Fallback: try text-based extraction
-            try:
-                raw = card.text.strip()
-                if not raw:
-                    logger.debug("OLX item vazio")
-                    return None
-                lines = [l.strip() for l in raw.split("\n") if l.strip()]
-                if not lines:
-                    return None
-                # Title: first long line that isn't a price
-                for line in lines:
-                    if len(line) > 10 and not re.match(r"^R?\$?\s*[\d.,]+", line):
-                        title = line
-                        break
-                if not title:
-                    title = lines[0]
-            except Exception:
-                pass
-            if not title:
-                logger.debug("OLX: item sem título. Text: %s", raw[:100] if 'raw' in dir() else "?")
-                return None
-
-        price = self._parse_price(card)
-        if price is None:
-            # Fallback: find price in raw text
-            try:
-                raw = card.text.strip()
-                m = re.search(r"R\$\s*([\d.,]+)", raw)
-                if m:
-                    price = self._parse_price_str(m.group(1))
-            except Exception:
-                pass
-
-        location = self._first_text(card, _LOCATION_SELECTORS)
-        if not location:
-            # Fallback: look for "City - ST" pattern
-            try:
-                raw = card.text.strip()
-                m = re.search(r"([A-Za-zÀ-ÿ\s]+)\s*-\s*[A-Z]{2}", raw)
-                if m:
-                    location = m.group(0)
-            except Exception:
-                pass
-
-        date = self._first_text(card, _DATE_SELECTORS)
-        if not date:
-            # Fallback: look for date-like text
-            try:
-                raw = card.text.strip()
-                for line in raw.split("\n"):
-                    if re.search(r"(Hoje|Ontem|\d{2}/\d{2})", line):
-                        date = line.strip()
-                        break
-            except Exception:
-                pass
-
-        link = self._first_attr(card, _LINK_SELECTORS)
-        img = self._first_attr(card, _IMAGE_SELECTORS)
-        prof = bool(self._first_text(card, _PROFESSIONAL_SELECTORS))
-
-        return OLXAd(
-            title=title, price=price, location=location or None,
-            date=date or None, ad_url=link, image_url=img,
-            is_professional=prof,
-        )
-
-    def _parse_price(self, card: Any) -> float | None:
-        text = self._first_text(card, _PRICE_SELECTORS)
+        text = (card.text or "").strip()
         if not text:
             return None
-        return self._parse_price_str(text)
 
-    def _parse_price_str(self, raw: str) -> float | None:
-        """Parse a price string like 'R$ 1.200' or 'R$ 3.499,90' into float."""
-        if not raw:
+        # 1. Title: CSS selectors first, then text fallback
+        title = self._try_selectors(card, _TITLE_SELECTORS)
+        if not title:
+            lines = [l.strip() for l in text.split("\n") if l.strip()]
+            for line in lines:
+                if len(line) > 15 and not re.match(r"^R?\$", line):
+                    title = line
+                    break
+
+        # 2. Price: regex (most reliable)
+        price = self._extract_price(text)
+
+        # 3. Location: regex
+        location = self._extract_location(text)
+
+        # 4. Date: regex
+        date = self._extract_date(text)
+
+        # 5. Link
+        link = self._try_attr(card, [
+            "a[href*='olx.com.br']",
+            "a[href*='/anuncio/']",
+            "a",
+        ], "href")
+
+        # 6. Image
+        img = self._try_attr(card, [
+            "img[src*='img.olx.com.br']",
+            "img[src*='thumbs']",
+            "img",
+        ], "src")
+
+        # Minimum criterion: has title OR price
+        if not title and price is None:
             return None
-        if "grátis" in raw.lower() or "gratis" in raw.lower():
-            return 0.0
-        text = raw.replace("R$", "").replace(" ", "").strip()
-        if re.search(r",\d{2}$", text):
-            text = text.replace(".", "").replace(",", ".")
-        elif "." in text and "," not in text:
-            text = text.replace(".", "")
-        else:
-            text = text.replace(",", ".")
+
+        return OLXAd(
+            title=title or "Sem título",
+            price=price,
+            location=location or None,
+            date=date or None,
+            ad_url=link or "",
+            image_url=img or "",
+        )
+
+    def _extract_price(self, text: str) -> float | None:
+        """Extract price via regex. If multiple prices, last is current."""
+        prices = re.findall(r"R\$\s*([\d.,]+)", text)
+        if not prices:
+            return None
+        raw = prices[-1]  # last = discounted price
+        raw = raw.replace(".", "").replace(",", ".")
         try:
-            return float(text)
+            return float(raw)
         except ValueError:
             return None
 
-    def _first_text(self, element: Any, selectors: list[str]) -> str:
+    def _extract_location(self, text: str) -> str | None:
+        m = re.search(
+            r"([A-ZÀ-Ú][a-zà-ú]+(?:\s[A-ZÀ-Ú][a-zà-ú]+)*)\s*-\s*([A-Z]{2})",
+            text,
+        )
+        return f"{m.group(1)} - {m.group(2)}" if m else None
+
+    def _extract_date(self, text: str) -> str | None:
+        m = re.search(r"(Hoje|Ontem|\d{2}/\d{2}(?:/\d{4})?),?\s*(\d{2}:\d{2})?", text)
+        return m.group(0).strip() if m else None
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _try_selectors(self, element: Any, selectors: list[str]) -> str:
         for sel in selectors:
             try:
                 el = element.find_element(By.CSS_SELECTOR, sel)
                 t = el.text.strip()
-                if t:
+                if t and len(t) > 3:
                     return t
             except Exception:
                 continue
         return ""
 
-    def _first_attr(self, element: Any, pairs: list[tuple[str, str]]) -> str:
-        for sel, attr in pairs:
+    def _try_attr(self, element: Any, selectors: list[str], attr: str) -> str:
+        for sel in selectors:
             try:
                 el = element.find_element(By.CSS_SELECTOR, sel)
                 v = el.get_attribute(attr)
@@ -317,7 +282,7 @@ class OLXScraper(BaseScraper):
             self._cfg.get("random_delay_max", 4),
         ))
 
-    def _save_debug(self, driver: Any, label: str) -> None:
+    def _save_debug(self, driver: Any, label: str, save_items: bool = False) -> None:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_dir = Path("data/logs")
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -329,3 +294,20 @@ class OLXScraper(BaseScraper):
             (log_dir / f"olx_debug_{ts}.html").write_text(driver.page_source, encoding="utf-8")
         except Exception:
             pass
+        if save_items:
+            try:
+                items_dir = log_dir / f"olx_items_{ts}"
+                items_dir.mkdir(exist_ok=True)
+                for sel in _CONTAINER_SELECTORS:
+                    items = driver.find_elements(By.CSS_SELECTOR, sel)
+                    if items:
+                        for i, item in enumerate(items[:5]):
+                            try:
+                                outer = item.get_attribute("outerHTML") or item.text
+                                (items_dir / f"item_{i}.html").write_text(outer or "", encoding="utf-8")
+                            except Exception:
+                                pass
+                        break
+                logger.info("Debug items saved → %s/", items_dir)
+            except Exception as exc:
+                logger.warning("Debug items save failed: %s", exc)

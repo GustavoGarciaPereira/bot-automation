@@ -102,7 +102,7 @@ class TestSearch:
         mock_selenium.return_value = mock_cm
         mock_wait_instance = MagicMock()
         mock_wait.return_value = mock_wait_instance
-        items = [_make_item(HTML_CARD.replace("Notebook Dell", f"A{i}")) for i in range(20)]
+        items = [_make_item(HTML_CARD.replace("Notebook Dell", f"Notebook Model {i}")) for i in range(20)]
         mock_driver.find_elements.return_value = items
         with patch.object(scraper, "_wait_for_results", return_value=True):
             results = await scraper.search("t", max_results=10)
@@ -111,12 +111,16 @@ class TestSearch:
 
 class TestPrice:
     def test_brl(self, scraper: OLXScraper) -> None:
-        item = _make_item('<div><span class="price">R$ 1.200</span></div>')
-        assert scraper._parse_price(item) == 1200.0
+        """R$ 1.200 → 1200.0 via _extract_price"""
+        assert scraper._extract_price("R$ 1.200") == 1200.0
 
     def test_gratis(self, scraper: OLXScraper) -> None:
-        item = _make_item('<div><span class="price">Grátis</span></div>')
-        assert scraper._parse_price(item) == 0.0
+        """Grátis → None (not matched by R$ regex)"""
+        assert scraper._extract_price("Grátis") is None
+
+    def test_two_prices(self, scraper: OLXScraper) -> None:
+        """Multiple prices: last one wins"""
+        assert scraper._extract_price("R$ 4.100\nR$ 3.800") == 3800.0
 
 
 class TestModels:
