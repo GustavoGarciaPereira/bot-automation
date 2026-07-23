@@ -46,12 +46,6 @@ class MercadoLivrePlugin(PortalPlugin):
     async def fetch_intimations(
         self, advogado: Advogado, data_referencia: str
     ) -> list[dict[str, Any]]:
-        """Search Mercado Livre for the configured search terms.
-
-        Reads ``settings`` from the client config JSON:
-        - ``search_terms`` (list[str]): terms to search for
-        - ``max_results`` (int): max products per term (default 10)
-        """
         search_terms: list[str] = self._settings.get("search_terms", [])
         max_results: int = int(self._settings.get("max_results", 10))
 
@@ -59,21 +53,25 @@ class MercadoLivrePlugin(PortalPlugin):
             logger.warning("No search_terms configured in client settings")
             return []
 
-        self._scraper = MercadoLivreScraper(
-            headless=self.headless,
-            remote_url=self.remote_url,
-        )
+        import asyncio
         all_results: list[dict[str, Any]] = []
 
         for term in search_terms:
             logger.info("Searching Mercado Livre for: %s", term)
+            # Create a new scraper per term so driver lifecycle is independent
+            scraper = MercadoLivreScraper(
+                headless=self.headless,
+                remote_url=self.remote_url,
+            )
             try:
-                results = await self._scraper.search(term, max_results=max_results)
+                results = await scraper.search(term, max_results=max_results)
                 for r in results:
                     r["_search_term"] = term
                 all_results.extend(results)
             except Exception as exc:
                 logger.error("Search failed for term %r: %s", term, exc)
+            # Small delay between terms to avoid rate limiting
+            await asyncio.sleep(2)
 
         logger.info(
             "Mercado Livre: fetched %d products across %d terms",
@@ -93,7 +91,11 @@ class MercadoLivrePlugin(PortalPlugin):
             tipo_comunicacao="Produto",
             numero_processo=raw_data.get("url", ""),
             objeto_comunicacao=raw_data.get("title", ""),
-            data_comunicacao=raw_data.get("collected_at", ""),
+            data_comunicacao=(
+                raw_data.get("collected_at").strftime("%Y-%m-%d %H:%M:%S")
+                if isinstance(raw_data.get("collected_at"), datetime)
+                else str(raw_data.get("collected_at", ""))
+            ),
             parte_1=raw_data.get("seller", ""),
             instancia=raw_data.get("condition", ""),
             comarca=raw_data.get("currency", ""),
