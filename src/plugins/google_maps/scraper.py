@@ -447,15 +447,14 @@ class GoogleMapsScraper(BaseScraper):
 
     def _website(self, item: Any) -> str | None:
         """Extract website URL from the card."""
-        # Strategy 1: specific selectors
+        # Try specific website selectors only
         for sel in [
-            "a.lcr4fd.S9kvJb[data-value='Website']",
-            "a.lcr4fd[data-value='Website']",
-            "a[aria-label*='Acessar o site']",
-            "a[aria-label*='site']",
             "a[data-item-id='authority']",
             "a[data-item-id='authority'][href]",
-            "a[target='_blank'][href]",
+            "a[aria-label*='Acessar o site']",
+            "a[aria-label*='site']",
+            "a.lcr4fd.S9kvJb[data-value='Website']",
+            "a.lcr4fd[data-value='Website']",
         ]:
             try:
                 el = item.find_element(By.CSS_SELECTOR, sel)
@@ -464,18 +463,6 @@ class GoogleMapsScraper(BaseScraper):
                     return href
             except Exception:
                 continue
-
-        # Strategy 2: regex on outerHTML (catches links not in visible elements)
-        try:
-            import re
-            html = item.get_attribute("outerHTML") or ""
-            urls = re.findall(r'href="(https?://(?:[^"\\]+))"', html)
-            for url in urls:
-                if self._is_valid_website(url):
-                    return url
-        except Exception:
-            pass
-
         return None
 
     def _is_valid_website(self, url: str) -> bool:
